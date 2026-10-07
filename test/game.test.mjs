@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createCipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createCatalog, createGame, GameError } from '../lib/game.mjs';
 import { loadConfiguration } from '../lib/config.mjs';
 import { createApplication } from '../server.mjs';
@@ -16,11 +17,20 @@ const artworks = [
 ];
 const game = (options = {}) => createGame({ secret, goalCode, artworks, ...options });
 const isError = (code) => (error) => error instanceof GameError && error.code === code;
+const initialBoosters = { phoenixRemaining: 10, luckyRemaining: 3 };
+
+function fixtureToken(state) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', createHash('sha256').update(secret).digest(), iv);
+  cipher.setAAD(Buffer.from('upgrade-session-v1'));
+  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(state), 'utf8'), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString('base64url');
+}
 
 test('new player receives 500 and validation is enforced', () => {
   const engine = game();
   const session = engine.start('  Игрок  ');
-  assert.deepEqual(session.player, { nickname: 'Игрок', balance: 500, inventory: [], wins: 0, attempts: 0 });
+  assert.deepEqual(session.player, { nickname: 'Игрок', balance: 500, inventory: [], wins: 0, attempts: 0, boosters: initialBoosters });
   assert.throws(() => engine.start('<script>'), isError('INVALID_NICKNAME'));
   assert.throws(() => engine.start('a'), isError('INVALID_NICKNAME'));
   assert.throws(() => engine.start('a\nB'), isError('INVALID_NICKNAME'));
@@ -41,10 +51,158 @@ test('catalog covers every 10-ruble tier, filters, sorts and paginates', () => {
   assert.equal(catalog.list({ min: 10, max: 30, page: 2, limit: 2 }).items[0].price, 30);
   assert.equal(catalog.list({ q: 'impossible item' }).total, 0);
   assert.throws(() => catalog.get('skin-0'), isError('ITEM_NOT_FOUND'));
-  assert.throws(() => catalog.get('skin-15'), isError('ITEM_NOT_FOUND'));
+  assert.equal(catalog.get('skin-15').price, 15);
   assert.throws(() => catalog.get('skin-500000'), isError('ITEM_NOT_FOUND'));
   assert.throws(() => catalog.list({ min: 'NaN' }), isError('INVALID_FILTER'));
   assert.throws(() => catalog.list({ min: 30, max: 10 }), isError('INVALID_FILTER'));
+});
+
+test('exact cent-priced items and exact catalog filters are available to purchase', () => {
+  const engine = game();
+  for (const price of [10, 10.01, 15, 22.5, 22.51, 500.01, 5000.01, 50_000.01, 499_999.99]) {
+    const exact = engine.catalog.get(`skin-${price}`);
+    assert.equal(exact.price, price);
+    assert.ok(exact.image && exact.name);
+    assert.deepEqual(engine.catalog.list({ min: String(price), max: String(price) }).items, [exact]);
+  }
+  assert.equal(engine.catalog.get('skin-22.50').id, 'skin-22.5');
+  for (const id of ['skin-9.99', 'skin-10.001', 'skin-1e3', 'skin-+10', 'skin-010', 'skin-500000.00', 'skin-499999.999', 'skin-Infinity']) assert.throws(() => engine.catalog.get(id), isError('ITEM_NOT_FOUND'));
+  assert.throws(() => engine.catalog.list({ min: '10.001', max: '10.001' }), isError('INVALID_FILTER'));
+  assert.equal(engine.catalog.list({ min: 500_000, max: 500_000 }).items[0].id, 'code');
+  assert.equal(engine.catalog.list({ min: 22.5, max: 22.5, q: 'does-not-exist' }).total, 0);
+  let session = engine.start('Копейки');
+  for (let index = 0; index < 10; index++) {
+    session = engine.buy(session.token, 'skin-22.51');
+    assert.equal(session.player.balance, 477.49);
+    session = engine.sell(session.token, session.player.inventory[0].inventoryId);
+    assert.equal(session.player.balance, 500);
+  }
+  session = engine.buy(session.token, 'skin-489.99');
+  assert.equal(session.player.balance, 10.01);
+  session = engine.buy(session.token, 'skin-10.01');
+  assert.equal(session.player.balance, 0);
+  assert.equal(game().resume(session.token).player.balance, 0);
+  assert.throws(() => engine.buy(session.token, 'skin-10'), isError('INSUFFICIENT_FUNDS'));
+});
+
+test('one-and-a-half upgrades retain the actual 66.67 percent chance without 10-ruble rounding', () => {
+  const engine = game({ random: () => 0.5 });
+  let session = engine.start('Полтора');
+  session = engine.buy(session.token, 'skin-10');
+  session = engine.upgrade(session.token, session.player.inventory[0].inventoryId, 'skin-15');
+  assert.ok(Math.abs(session.result.chance - 66.66666666666666) < 1e-10);
+  assert.equal(session.player.inventory[0].price, 15);
+  session = engine.upgrade(session.token, session.player.inventory[0].inventoryId, 'skin-22.5');
+  assert.ok(Math.abs(session.result.chance - 66.66666666666666) < 1e-10);
+  assert.equal(session.player.inventory[0].price, 22.5);
+  session = engine.sell(session.token, session.player.inventory[0].inventoryId);
+  assert.equal(session.player.balance, 512.5);
+});
+
+test('Phoenix saves the same source on ten losses, rejects the eleventh armed roll atomically', () => {
+  const engine = game({ random: () => 0 });
+  let session = engine.start('Феникс');
+  session = engine.buy(session.token, 'skin-10');
+  const source = session.player.inventory[0];
+  for (let count = 1; count <= 10; count++) {
+    session = engine.upgrade(session.token, source.inventoryId, 'skin-20', { phoenix: true });
+    assert.equal(session.result.won, false);
+    assert.equal(session.result.savedByPhoenix, true);
+    assert.equal(session.result.luckyUsed, false);
+    assert.deepEqual(session.player.inventory, [source]);
+    assert.equal(session.player.boosters.phoenixRemaining, 10 - count);
+    assert.equal(session.player.attempts, count);
+    assert.equal(session.player.wins, 0);
+    assert.equal(session.player.balance, 490);
+  }
+  assert.throws(() => engine.upgrade(session.token, source.inventoryId, 'skin-20', { phoenix: true }), isError('PHOENIX_EXHAUSTED'));
+  assert.deepEqual(engine.resume(session.token), { token: session.token, player: session.player });
+  assert.deepEqual(game().resume(session.token).player.boosters, { phoenixRemaining: 0, luckyRemaining: 3 });
+  session = engine.upgrade(session.token, source.inventoryId, 'skin-20');
+  assert.equal(session.result.savedByPhoenix, false);
+  assert.equal(session.player.inventory.length, 0);
+  engine.reset(session.token);
+  assert.deepEqual(engine.start('Заново').player.boosters, initialBoosters);
+});
+
+test('Phoenix is not charged on a normal victory', () => {
+  const engine = game({ random: () => 0.5 });
+  let session = engine.start('Феникс');
+  session = engine.buy(session.token, 'skin-10');
+  const source = session.player.inventory[0].inventoryId;
+  session = engine.upgrade(session.token, source, 'skin-20', { phoenix: true });
+  assert.equal(session.result.won, true);
+  assert.equal(session.result.savedByPhoenix, false);
+  assert.equal(session.player.boosters.phoenixRemaining, 10);
+  assert.notEqual(session.player.inventory[0].inventoryId, source);
+});
+
+test('Lucky guarantees three valid wins and rejects the fourth without spending', () => {
+  const engine = game({ random: () => 0 });
+  let session = engine.start('Счастливчик');
+  session = engine.buy(session.token, 'skin-10');
+  for (const [count, price] of [20, 40, 80].entries()) {
+    session = engine.upgrade(session.token, session.player.inventory[0].inventoryId, `skin-${price}`, { lucky: true, phoenix: true });
+    assert.equal(session.result.won, true);
+    assert.equal(session.result.chance, 50);
+    assert.equal(session.result.angle, 90);
+    assert.equal(session.result.luckyUsed, true);
+    assert.equal(session.result.savedByPhoenix, false);
+    assert.equal(session.player.boosters.luckyRemaining, 2 - count);
+    assert.equal(session.player.boosters.phoenixRemaining, 10);
+  }
+  assert.throws(() => engine.upgrade(session.token, session.player.inventory[0].inventoryId, 'skin-160', { lucky: true }), isError('LUCKY_EXHAUSTED'));
+  assert.deepEqual(engine.resume(session.token), { token: session.token, player: session.player });
+  assert.deepEqual(game().resume(session.token).player.boosters, { phoenixRemaining: 10, luckyRemaining: 0 });
+});
+
+test('Lucky charges even a naturally winning draw and uniformly maps draws into the normal arc', () => {
+  for (const draw of [0, 0.25, 0.5, 0.75, 0.999999999]) {
+    const engine = game({ random: () => draw });
+    let session = engine.start('Счастливчик');
+    session = engine.buy(session.token, 'skin-15.01');
+    session = engine.upgrade(session.token, session.player.inventory[0].inventoryId, 'skin-30.02', { lucky: true });
+    assert.equal(session.result.chance, 50);
+    assert.equal(session.result.won, true);
+    assert.ok(session.result.angle >= 90 && session.result.angle < 270);
+    assert.equal(session.result.angle, 90 + draw * 180);
+    assert.equal(session.player.boosters.luckyRemaining, 2);
+  }
+});
+
+test('Lucky below 50 percent and non-boolean booster flags are rejected before all changes', () => {
+  let draws = 0;
+  const engine = game({ random: () => { draws++; return 0.5; } });
+  let session = engine.start('Проверка');
+  session = engine.buy(session.token, 'skin-10');
+  const source = session.player.inventory[0].inventoryId;
+  assert.throws(() => engine.upgrade(session.token, source, 'skin-20.01', { lucky: true, phoenix: true }), isError('LUCKY_CHANCE_TOO_LOW'));
+  for (const options of [{ lucky: 'true' }, { phoenix: 1 }, { lucky: null }, { phoenix: [] }, null, []]) assert.throws(() => engine.upgrade(session.token, source, 'skin-20', options), isError('INVALID_BOOSTER'));
+  assert.equal(draws, 0);
+  assert.deepEqual(engine.resume(session.token), session);
+});
+
+test('legacy saves migrate with their money and inventory and invalid booster saves cannot refill charges', () => {
+  const legacy = { v: 1, sid: randomUUID(), revision: 7, nickname: 'Старый игрок', balance: 345, inventory: [{ inventoryId: randomUUID(), itemId: 'skin-100' }], wins: 2, attempts: 4, unlocked: false };
+  const token = fixtureToken(legacy);
+  const engine = game({ random: () => 0 });
+  let session = engine.resume(token);
+  assert.notEqual(session.token, token);
+  assert.equal(session.player.balance, 345);
+  assert.equal(session.player.inventory[0].inventoryId, legacy.inventory[0].inventoryId);
+  assert.deepEqual(session.player.boosters, initialBoosters);
+  session = engine.upgrade(session.token, session.player.inventory[0].inventoryId, 'skin-200', { phoenix: true });
+  assert.equal(session.player.boosters.phoenixRemaining, 9);
+  assert.equal(engine.resume(token).player.boosters.phoenixRemaining, 9);
+  assert.equal(game().resume(session.token).player.boosters.phoenixRemaining, 9);
+  for (const boosters of [null, {}, { phoenixRemaining: 11, luckyRemaining: 3 }, { phoenixRemaining: -1, luckyRemaining: 3 }, { phoenixRemaining: 10, luckyRemaining: 4 }, { phoenixRemaining: 10, luckyRemaining: 0.5 }, { phoenixRemaining: '10', luckyRemaining: 3 }]) {
+    assert.throws(() => game().resume(fixtureToken({ ...legacy, boosters })), isError('INVALID_SESSION'));
+  }
+  const v2 = { ...legacy, v: 2, balanceCents: 34_500, boosters: initialBoosters };
+  delete v2.balance;
+  const missing = { ...v2 }; delete missing.boosters;
+  assert.throws(() => game().resume(fixtureToken(missing)), isError('INVALID_SESSION'));
+  assert.throws(() => game().resume(fixtureToken({ ...v2, balanceCents: 34_500.5 })), isError('INVALID_SESSION'));
 });
 
 test('large catalog maps low prices to ordinary skins and high prices to premium skins', () => {
@@ -262,12 +420,28 @@ test('HTTP flow, safe static serving, JSON validation and private data boundarie
     for (const url of ['/server.mjs', '/.local-secrets.json', '/%2ehidden.json', '/..%2fserver.mjs', '/%5c..%5cserver.mjs']) assert.equal((await fetch(base + url)).status, 404, url);
     const initial = await post('/api/session', { nickname: 'Tester' });
     assert.equal(initial.status, 200);
+    assert.deepEqual(initial.payload.player.boosters, initialBoosters);
+    const exact = await (await fetch(base + '/api/item?id=skin-22.51')).json();
+    assert.equal(exact.price, 22.51);
+    const exactList = await (await fetch(base + '/api/catalog?min=22.51&max=22.51')).json();
+    assert.deepEqual(exactList.items, [exact]);
     const bought = await post('/api/buy', { token: initial.payload.token, itemId: 'skin-100' });
     assert.equal(bought.payload.player.balance, 400);
     const stale = await post('/api/buy', { token: initial.payload.token, itemId: 'skin-100' });
     assert.equal(stale.status, 409);
     assert.equal(stale.payload.token, bought.payload.token);
-    const upgraded = await post('/api/upgrade', { token: bought.payload.token, inventoryId: bought.payload.player.inventory[0].inventoryId, targetId: 'code' });
+    const invalidBooster = await post('/api/upgrade', { token: bought.payload.token, inventoryId: bought.payload.player.inventory[0].inventoryId, targetId: 'skin-150', lucky: 'true' });
+    assert.equal(invalidBooster.status, 400);
+    assert.equal(invalidBooster.payload.code, 'INVALID_BOOSTER');
+    const invalidChance = await post('/api/upgrade', { token: bought.payload.token, inventoryId: bought.payload.player.inventory[0].inventoryId, targetId: 'skin-200.01', lucky: true });
+    assert.equal(invalidChance.status, 400);
+    assert.equal(invalidChance.payload.code, 'LUCKY_CHANCE_TOO_LOW');
+    const lucky = await post('/api/upgrade', { token: bought.payload.token, inventoryId: bought.payload.player.inventory[0].inventoryId, targetId: 'skin-150', lucky: true, phoenix: true });
+    assert.equal(lucky.status, 200);
+    assert.equal(lucky.payload.result.luckyUsed, true);
+    assert.equal(lucky.payload.result.savedByPhoenix, false);
+    assert.deepEqual(lucky.payload.player.boosters, { phoenixRemaining: 10, luckyRemaining: 2 });
+    const upgraded = await post('/api/upgrade', { token: lucky.payload.token, inventoryId: lucky.payload.player.inventory[0].inventoryId, targetId: 'code' });
     assert.equal(upgraded.payload.player.unlockedCode, goalCode);
     assert.equal((await fetch(base + '/api/item?id=code')).status, 200);
     const publicItem = await (await fetch(base + '/api/item?id=code')).text();

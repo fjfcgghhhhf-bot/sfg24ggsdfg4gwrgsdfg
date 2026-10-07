@@ -8,10 +8,34 @@ const goal = {id:'code',name:'Зашифрованный код',weapon:'КОН�
 let player = null, token = null, source = null, target = null, mode = 'shop';
 let busy = false, shopPage = 1, targetPage = 1, rotation = 180;
 let shopSequence = 0, targetSequence = 0, selectionSequence = 0, toastTimer, audioContext;
-let prefs = {sound:true,fast:false};
+const DEFAULT_MULTIPLIERS = [1.5,2,5,10];
+let prefs = {sound:true,fast:false,multipliers:[...DEFAULT_MULTIPLIERS]};
+let phoenixArmed = false, luckyArmed = false, targetLoading = false, activeMultiplier = 2;
 let pendingStorageValue;
 const cache = new Map([['code',goal]]);
 try { token = localStorage.getItem(SESSION_KEY); prefs = {...prefs,...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')}; } catch { /* Storage warning shown when saving. */ }
+if (!Array.isArray(prefs.multipliers) || prefs.multipliers.length!==4 || prefs.multipliers.some((x)=>!Number.isFinite(x)||x<1.01||x>50000)) prefs.multipliers=[...DEFAULT_MULTIPLIERS];
+function savePreferences() { try {localStorage.setItem(PREFS_KEY,JSON.stringify(prefs));} catch {} }
+function primeAudio() {
+  if(!prefs.sound) return null;
+  try {
+    audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
+    audioContext.resume().catch(()=>{});
+    return audioContext;
+  } catch { return null; }
+}
+function spinTick() {
+  const context=primeAudio(); if(!context) return;
+  try {
+    const oscillator=context.createOscillator(),gain=context.createGain(),now=context.currentTime;
+    oscillator.type='triangle'; oscillator.frequency.setValueAtTime(1600,now);
+    oscillator.frequency.exponentialRampToValueAtTime(450,now+.035);
+    gain.gain.setValueAtTime(.035,now);gain.gain.exponentialRampToValueAtTime(.0001,now+.035);
+    oscillator.connect(gain);gain.connect(context.destination);
+    oscillator.start(now);oscillator.stop(now+.04);
+    oscillator.onended=()=>{oscillator.disconnect();gain.disconnect();};
+  } catch { /* Optional sound must never interrupt a spin. */ }
+}
 
 function toast(message) {
   $('toast').textContent = message;
@@ -41,10 +65,8 @@ async function api(path, body) {
   return data;
 }
 function sound(won) {
-  if (!prefs.sound) return;
+  if (!primeAudio()) return;
   try {
-    audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
-    audioContext.resume();
     [won ? 440:240,won ? 660:180,won ? 880:120].forEach((hz,i) => {
       const oscillator = audioContext.createOscillator(), gain = audioContext.createGain();
       oscillator.connect(gain); gain.connect(audioContext.destination);
@@ -52,11 +74,12 @@ function sound(won) {
       const start = audioContext.currentTime + i * .1;
       gain.gain.setValueAtTime(.06,start); gain.gain.exponentialRampToValueAtTime(.001,start+.18);
       oscillator.start(start); oscillator.stop(start+.2);
+      oscillator.onended=()=>{oscillator.disconnect();gain.disconnect();};
     });
   } catch { /* Audio is optional. */ }
 }
 function showDialog(id) { if (!$(id).open) $(id).showModal(); }
-function setStatus(text) { $('statusLine').textContent = text; }
+function setStatus(text,kind='') { $('statusLine').textContent = text; $('statusLine').classList.toggle('success',kind==='success'); $('statusLine').classList.toggle('error',kind==='error'); }
 function flushOtherTab() {
   if(pendingStorageValue === undefined) return;
   if(pendingStorageValue === null) localStorage.removeItem(SESSION_KEY);
@@ -82,7 +105,7 @@ function renderDisplay(id,item,isTarget) {
     const ghost = [...cache.values()].find((i) => i.id !== 'code');
     parent.innerHTML = `<div class="display-empty">${ghost ? `<img class="ghost-weapon" src="${esc(ghost.image)}" alt="">`:''}<svg class="empty-chevrons ${isTarget ? '':'down'}" aria-hidden="true"><use href="#icon-upgrade"/></svg></div><div class="display-caption">${isTarget ? 'Ваша следующая победа':'Начните с выбора скина'}</div>`;
   } else {
-    parent.innerHTML = `<img class="display-image ${item.id === 'code' ? 'display-code':''}" src="${esc(item.image)}" alt="${esc(`${item.weapon} ${item.name}`)}"><div class="display-type">${esc(item.weapon)}</div><div class="display-name">${esc(item.name)}</div><div class="display-price">${money(item.price)}</div>${item.id === 'code' ? '<span class="encrypted-label">10 цифр · откроется после победы</span>':''}`;
+    parent.innerHTML = `<img class="display-image ${item.id === 'code' ? 'display-code':''}" src="${esc(item.image)}" alt="${esc(`${item.weapon} ${item.name}`)}"><div class="display-type">${esc(item.weapon)}</div><div class="display-name">${esc(item.name)}</div><div class="display-price">${money(item.price)}</div>${item.id === 'code' ? '<span class="encrypted-label">10 цифр · откроется после победы</span>':isTarget ? `<button class="find-in-shop" data-action="find-in-shop" data-key="${esc(item.id)}" ${busy?'disabled':''}>Найти в магазине <span>↗</span></button>`:''}`;
   }
 }
 function arcPath(percent) {
@@ -98,9 +121,42 @@ function renderSelection() {
   const chance = valid ? source.price/target.price*100:0;
   $('winArc').setAttribute('d',arcPath(valid ? chance:50));
   $('chanceValue').textContent = valid ? `${new Intl.NumberFormat('ru-RU',{maximumFractionDigits:2}).format(chance)}%`:'—';
-  $('upgradeButton').disabled = !valid || busy;
+  $('upgradeButton').disabled = !valid || busy || targetLoading || (luckyArmed && chance<50);
   $('upgradeButton').classList.toggle('spinning',busy);
-  if (!busy) setStatus(!player ? 'Введите ник и получите 500 ₽ для старта':!source ? 'Купите скин в магазине и выберите его слева':!target ? 'Выберите предмет, который хотите получить':!valid ? 'Стоимость цели должна быть выше стоимости вашего скина':`Шанс ${chance.toFixed(2).replace('.',',')}% · ${money(source.price)} → ${money(target.price)}`);
+  renderBoosters(chance);
+  renderMultiplierButtons();
+  if (!busy) setStatus(targetLoading ? 'Подбираем цель…':!player ? 'Введите ник и получите 500 ₽ для старта':!source ? 'Купите скин в магазине и выберите его слева':!target ? 'Выберите предмет, который хотите получить':!valid ? 'Стоимость цели должна быть выше стоимости вашего скина':luckyArmed && chance<50 ? 'Для 777 нужен обычный шанс от 50%. Выберите более дешёвую цель.':luckyArmed ? `777: гарантированный успех · обычный шанс ${chance.toFixed(2).replace('.',',')}%`:`Шанс ${chance.toFixed(2).replace('.',',')}% · ${money(source.price)} → ${money(target.price)}`);
+}
+function renderBoosters(chance=0) {
+  const boosters=player?.boosters || {phoenixRemaining:10,luckyRemaining:3};
+  if(!busy && !boosters.phoenixRemaining) phoenixArmed=false;
+  if(!busy && !boosters.luckyRemaining) luckyArmed=false;
+  for(const [id,countId,key,armed] of [['phoenixToggle','phoenixCount','phoenixRemaining',phoenixArmed],['luckyToggle','luckyCount','luckyRemaining',luckyArmed]]) {
+    $(countId).textContent=boosters[key]; $(id).disabled=busy||!player||boosters[key]<=0;
+    $(id).classList.toggle('active',armed);$(id).setAttribute('aria-pressed',String(armed));
+  }
+  $('winArc').closest('svg').classList.toggle('lucky-mode',luckyArmed);
+  $('boostHint').textContent=luckyArmed ? chance>=50 ? '777 · победа гарантирована':'777 · нужен обычный шанс от 50%':phoenixArmed ? 'Феникс сохранит скин при поражении':'Феникс: 10 спасений · 777: 3 победы';
+}
+function multiplierPrice(price,multiplier) {
+  const sourceCents=Math.round(price*100);
+  const rawCents=sourceCents*multiplier;
+  const targetCents=Math.round(rawCents+Number.EPSILON*Math.max(1,Math.abs(rawCents))*2);
+  return Math.min(500000,Math.max(sourceCents+1,targetCents)/100);
+}
+function renderMultiplierButtons() {
+  document.querySelectorAll('[data-multiplier]').forEach((button,index)=>{
+    const multiplier=prefs.multipliers[index];
+    button.dataset.multiplier=String(multiplier);
+    const percent=source ? source.price/multiplierPrice(source.price,multiplier)*100:100/multiplier;
+    const label=`×${new Intl.NumberFormat('ru-RU',{maximumFractionDigits:2}).format(multiplier)}`;
+    button.innerHTML=`<span class="multiplier-value">${label}</span><span class="multiplier-chance">${percent.toFixed(2).replace('.',',')}%</span>`;
+    button.disabled=busy;button.classList.toggle('active',activeMultiplier===multiplier);
+    button.setAttribute('aria-label',`${label} · шанс ${percent.toFixed(2).replace('.',',')}%`);
+    button.setAttribute('aria-pressed',String(activeMultiplier===multiplier));
+  });
+  $('multiplierSettings').disabled=busy;
+  $('findChanceButton').disabled=busy;
 }
 function renderPlayer() {
   $('nickname').textContent = player?.nickname || 'Новая сессия';
@@ -111,7 +167,9 @@ function renderPlayer() {
   renderSelection();
   if (mode === 'inventory') renderInventoryGrid();
   renderInventoryModal();
-  if (player?.unlockedCode) document.body.classList.add('goal-unlocked');
+  document.body.classList.toggle('goal-unlocked',Boolean(player?.unlockedCode));
+  $('goalReward').hidden=!player?.unlockedCode;
+  $('goalCode').textContent=player?.unlockedCode || '';
 }
 function renderInventoryGrid() {
   if($('sourceCount')) $('sourceCount').textContent=`${player?.inventory.length || 0} предметов`;
@@ -130,7 +188,7 @@ function pager(element,page,pages,total,side) {
 async function loadShop() {
   if (mode !== 'shop') return;
   const seq = ++shopSequence;
-  const params = new URLSearchParams({min:$('shopMin').value || '10',max:$('shopMax').value || '499990',q:$('shopSearch').value,sort:'asc',page:shopPage,limit:20});
+  const params = new URLSearchParams({min:$('shopMin').value || '10',max:$('shopMax').value || '499999.99',q:$('shopSearch').value,sort:$('shopSort').value || 'asc',page:shopPage,limit:20});
   try {
     const data = await api(`catalog?${params}`);
     if (seq !== shopSequence || mode !== 'shop') return;
@@ -142,12 +200,13 @@ async function loadShop() {
 }
 async function loadTargets() {
   const seq = ++targetSequence;
-  const params = new URLSearchParams({min:$('targetMin').value || '10',max:$('targetMax').value || '499990',q:$('targetSearch').value,sort:$('targetSort').value || 'desc',page:targetPage,limit:19});
+  const params = new URLSearchParams({min:$('targetMin').value || '10',max:$('targetMax').value || '499999.99',q:$('targetSearch').value,sort:$('targetSort').value || 'desc',page:targetPage,limit:19});
   try {
     const data = await api(`catalog?${params}`);
     if (seq !== targetSequence) return;
     const items = data.items.filter((i)=>i.id!=='code'); items.forEach((i)=>cache.set(i.id,i));
-    $('targetGrid').innerHTML = card(goal,'select-target',target?.id==='code') + (items.length ? items.map((i)=>card(i,'select-target',target?.id===i.id)).join(''):empty('По вашему запросу ничего не найдено'));
+    const selectedExtra=target && target.id!=='code' && !items.some((i)=>i.id===target.id) ? card(target,'select-target',true):'';
+    $('targetGrid').innerHTML = card(goal,'select-target',target?.id==='code') + selectedExtra + (items.length ? items.map((i)=>card(i,'select-target',target?.id===i.id)).join(''):empty('По вашему запросу ничего не найдено'));
     pager('targetPager',data.page,data.pages,data.total,'target');
   } catch(error) { if(seq===targetSequence) $('targetGrid').innerHTML = empty(error.message,'<button class="button" data-action="retry-target">Повторить</button>'); }
 }
@@ -168,7 +227,7 @@ async function buy(itemId) {
     source = player.inventory.find((i)=>!previousIds.has(i.inventoryId)) || source;
     toast(`${source?.name || 'Скин'} куплен. Теперь выберите цель справа.`);
     switchMode('inventory');
-    await pickMultiplier(2,false);
+    await pickMultiplier(activeMultiplier || prefs.multipliers[0],false);
   } catch(error) { toast(error.message); }
   finally { busy = false; renderPlayer(); if(mode==='shop') loadShop(); loadTargets(); flushOtherTab(); }
 }
@@ -181,29 +240,35 @@ async function sell(inventoryId) {
 }
 async function selectSource(id) {
   if(busy) return;
-  selectionSequence++;
+  selectionSequence++;targetLoading=false;
   source = player.inventory.find((i)=>i.inventoryId===id);
+  if(!source) return;
   renderPlayer();
-  if(!target || target.price<=source.price) await pickMultiplier(2,false);
+  if(activeMultiplier || !target || target.price<=source.price) await pickMultiplier(activeMultiplier || prefs.multipliers[0],false);
   renderInventoryGrid();
 }
 function selectTarget(id) {
   if(busy) return;
   selectionSequence++;
+  targetLoading=false;activeMultiplier=null;
   target = cache.get(id); renderSelection();
   document.querySelectorAll('#targetGrid .item-card').forEach((el)=>{const chosen=el.dataset.key===id;el.classList.toggle('selected',chosen);el.setAttribute('aria-pressed',chosen);});
 }
 async function pickMultiplier(multiplier,notify=true) {
-  if(!source) { if(notify) toast('Сначала выберите свой скин слева.'); return; }
+  if(!Number.isFinite(multiplier)||multiplier<=1) return;
+  activeMultiplier=multiplier;
+  if(!source) {renderMultiplierButtons();if(notify)toast('Множитель выбран. Теперь выберите свой скин слева.');return;}
   const seq = ++selectionSequence, sourceId = source.inventoryId;
-  const price = Math.min(500000,Math.max(source.price+10,Math.round(source.price*multiplier/10)*10));
+  const price = multiplierPrice(source.price,multiplier);
+  targetLoading=true;activeMultiplier=multiplier;renderSelection();
   try {
     const item = price===500000 ? goal:await api(`item?id=skin-${price}`);
     if(seq !== selectionSequence || source?.inventoryId !== sourceId) return;
     const resolved = item.item || item; cache.set(resolved.id,resolved); target=resolved;
     $('targetMin').value=Math.max(10,price-50); $('targetMax').value=Math.min(500000,price+130); $('targetSort').value='asc'; targetPage=1;
-    renderSelection(); await loadTargets();
-  } catch(error) { toast(error.message); }
+    targetLoading=false;renderSelection(); await loadTargets();
+  } catch(error) { if(seq===selectionSequence){activeMultiplier=null;toast(error.message);} }
+  finally {if(seq===selectionSequence){targetLoading=false;renderSelection();}}
 }
 async function animatePointer(angle) {
   const duration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0:prefs.fast ? 550:3600;
@@ -212,44 +277,50 @@ async function animatePointer(angle) {
   const end = rotation + (prefs.fast ? 720:1800) + ((angle-normalized+360)%360);
   await new Promise((resolve)=>{
     const begins = performance.now();
+    let lastTick = -1000, lastSector=Math.floor(start/24);
     function frame(now) {
       const t = duration ? Math.min(1,(now-begins)/duration):1;
       rotation = start+(end-start)*(1-Math.pow(1-t,4));
       $('pointer').setAttribute('transform',`rotate(${rotation} 200 200)`);
+      const sector=Math.floor(rotation/24);
+      if(duration && t<1 && sector!==lastSector && now-lastTick>=35){spinTick();lastTick=now;lastSector=sector;}
       if(t<1) requestAnimationFrame(frame); else resolve();
     }
     requestAnimationFrame(frame);
   });
 }
 async function upgrade() {
-  if(busy || !source || !target || target.price<=source.price) return;
+  if(busy || targetLoading || !source || !target || target.price<=source.price) return;
+  if(luckyArmed && source.price/target.price<.5){toast('777 доступен только при обычном шансе от 50%.');return;}
   selectionSequence++;
+  primeAudio();
   busy=true; renderPlayer(); setStatus('Круг вращается…');
   const previousSource = source;
-  let finalStatus = '';
+  let finalStatus = '',finalKind='';
   try {
-    const data = await api('upgrade',{token,inventoryId:source.inventoryId,targetId:target.id});
+    const data = await api('upgrade',{token,inventoryId:source.inventoryId,targetId:target.id,phoenix:phoenixArmed,lucky:luckyArmed});
     // Persist before animation: refreshing cannot repeat or undo the result.
     saveSnapshot(data,false); source=previousSource;
     await animatePointer(data.result.angle);
-    source=null; busy=false; renderPlayer(); switchMode('inventory'); sound(data.result.won);
-    finalStatus = data.result.won ? 'Успех! Предмет добавлен в инвентарь.':'Неудача. Выбранный скин потерян.';
-    setStatus(finalStatus);
-    if(data.result.won) {
-      const prize = data.result.item;
-      $('resultContent').innerHTML = `<div class="result-badge">УСПЕШНЫЙ АПГРЕЙД</div><img class="result-image" src="${esc(prize.image)}" alt="${esc(prize.name)}"><h2>${prize.id==='code' ? 'Вы добрались до кода!':esc(prize.name)}</h2><p>${prize.id==='code' ? 'Все 10 цифр разблокированы. Ваш код:':`${esc(prize.weapon)} · ${money(prize.price)}`}</p>${prize.id==='code' ? `<code class="revealed-code">${esc(player.unlockedCode)}</code><button class="button primary" data-action="copy-code">Скопировать код</button>`:'<p>Предмет уже в вашем инвентаре. Продолжайте путь к коду.</p>'}<button class="button primary" data-close="resultDialog">Продолжить</button>`;
-      showDialog('resultDialog');
-    } else { toast(player.balance<10 && player.inventory.filter((i)=>i.id!=='code').length===0 ? 'Скины и баланс закончились. Начните заново кнопкой «Повторить сессию».':'Апгрейд не удался. Попробуйте другой скин.'); }
+    source=data.result.savedByPhoenix ? player.inventory.find((i)=>i.inventoryId===previousSource.inventoryId):null;
+    if(data.result.luckyUsed) luckyArmed=false;
+    busy=false; renderPlayer(); switchMode('inventory'); sound(data.result.won);
+    finalStatus = data.result.won ? data.result.item.id==='code' ? 'Цель достигнута! Код открыт ниже и сохранён в инвентаре.':`${data.result.luckyUsed ? '777 · ':''}Успех! ${data.result.item.name} добавлен в инвентарь.`:data.result.savedByPhoenix ? `Феникс спас ${previousSource.name}. Осталось спасений: ${player.boosters.phoenixRemaining}.`:'Неудача. Выбранный скин потерян.';
+    finalKind=data.result.won || data.result.savedByPhoenix ? 'success':'error';
+    setStatus(finalStatus,finalKind);
+    if(!data.result.won && !data.result.savedByPhoenix && player.balance<10 && !player.inventory.some((i)=>i.id!=='code')) finalStatus='Скины закончились. Нажмите «Повторить сессию», чтобы начать заново.';
   } catch(error) {
     toast(error.message);
     // Recover an already committed response if the connection dropped after mutation.
     try { saveSnapshot(await api('resume',{token})); } catch { /* Leave stored token for next attempt. */ }
-  } finally { busy=false; renderPlayer(); if(finalStatus)setStatus(finalStatus); loadTargets(); flushOtherTab(); }
+  } finally { busy=false; renderPlayer(); if(finalStatus)setStatus(finalStatus,finalKind); loadTargets(); flushOtherTab(); }
 }
 function debounce(fn) { let timer; return () => {clearTimeout(timer);timer=setTimeout(fn,220);}; }
 document.addEventListener('click',async(event)=>{
   const close = event.target.closest('[data-close]');
   if(close) { const dialog=$(close.dataset.close); if(dialog && dialog.id!=='welcomeDialog') dialog.close(); }
+  const preset=event.target.closest('[data-multiplier]');
+  if(preset && !busy){pickMultiplier(Number(preset.dataset.multiplier));return;}
   const button = event.target.closest('[data-action]');
   if(!button) return;
   const action=button.dataset.action;
@@ -258,6 +329,11 @@ document.addEventListener('click',async(event)=>{
   if(action==='select-source') selectSource(button.dataset.key);
   if(action==='select-target') selectTarget(button.dataset.key);
   if(action==='open-shop') { switchMode('shop'); $('sourceGrid').scrollIntoView({behavior:'smooth',block:'center'}); }
+  if(action==='find-in-shop' && !busy) {
+    const item=cache.get(button.dataset.key);if(!item || item.id==='code')return;
+    $('shopSearch').value='';$('shopMin').value=String(item.price);$('shopMax').value=String(item.price);$('shopSort').value='asc';shopPage=1;
+    switchMode('shop');$('sourceGrid').scrollIntoView({behavior:'smooth',block:'center'});
+  }
   if(action==='retry-shop') loadShop();
   if(action==='retry-target') loadTargets();
   if(action==='page') { if(button.dataset.side==='shop') {shopPage=Number(button.dataset.page);loadShop();} else {targetPage=Number(button.dataset.page);loadTargets();} }
@@ -280,7 +356,7 @@ $('welcomeForm').addEventListener('submit',async(event)=>{
   if(nickname.length<2) {$('welcomeError').textContent='Введите ник от 2 до 24 символов.';return;}
   busy=true;const submit=$('welcomeForm').querySelector('button[type="submit"]');submit.disabled=true;
   try {
-    saveSnapshot(await api('session',{nickname}));$('welcomeDialog').close();$('shopMax').value='500';switchMode('shop');toast('Вам зачислено 500 ₽. Выберите первый скин!');
+    saveSnapshot(await api('session',{nickname}));$('welcomeDialog').close();$('shopMax').value='';switchMode('shop');toast('Вам зачислено 500 ₽. Выберите первый скин!');
   } catch(error) {$('welcomeError').textContent=error.message;}
   finally {busy=false;submit.disabled=false;renderPlayer();loadShop();loadTargets();flushOtherTab();}
 });
@@ -288,7 +364,31 @@ $('upgradeButton').addEventListener('click',upgrade);
 for(const id of ['shopSearch','shopMin','shopMax']) $(id).addEventListener('input',debounce(()=>{shopPage=1;loadShop();}));
 for(const id of ['targetSearch','targetMin','targetMax']) $(id).addEventListener('input',debounce(()=>{targetPage=1;loadTargets();}));
 $('targetSort').addEventListener('change',()=>{targetPage=1;loadTargets();});
-for(const button of document.querySelectorAll('[data-multiplier]')) button.addEventListener('click',()=>{if(!busy)pickMultiplier(Number(button.dataset.multiplier));});
+$('shopSort').addEventListener('change',()=>{shopPage=1;loadShop();});
+$('shopAllButton').addEventListener('click',()=>{$('shopMin').value='';$('shopMax').value='';$('shopSearch').value='';shopPage=1;loadShop();});
+$('multiplierSettings').addEventListener('click',()=>{
+  if(busy)return;
+  prefs.multipliers.forEach((value,i)=>{$(`multiplier${i}`).value=String(value);});
+  $('multiplierError').textContent='';showDialog('multiplierDialog');
+});
+$('restoreMultipliers').addEventListener('click',()=>{DEFAULT_MULTIPLIERS.forEach((value,i)=>{$(`multiplier${i}`).value=String(value);});$('multiplierError').textContent='';});
+$('multiplierForm').addEventListener('submit',async(event)=>{
+  event.preventDefault();if(busy)return;
+  const values=DEFAULT_MULTIPLIERS.map((_,i)=>Number($(`multiplier${i}`).value));
+  if(values.some((value)=>!Number.isFinite(value)||value<1.01||value>50000||Math.abs(value*100-Math.round(value*100))>1e-7)){$('multiplierError').textContent='Введите значения от 1,01 до 50 000, не более двух знаков после запятой.';return;}
+  const activeIndex=prefs.multipliers.indexOf(activeMultiplier);
+  prefs.multipliers=values;savePreferences();$('multiplierDialog').close();
+  if(activeIndex>=0)await pickMultiplier(values[activeIndex],false);
+  renderMultiplierButtons();toast('Множители сохранены.');
+});
+$('phoenixToggle').addEventListener('click',()=>{
+  if(busy||!player||(player.boosters?.phoenixRemaining??10)<=0)return;
+  phoenixArmed=!phoenixArmed;renderSelection();
+});
+$('luckyToggle').addEventListener('click',()=>{
+  if(busy||!player||(player.boosters?.luckyRemaining??3)<=0)return;
+  luckyArmed=!luckyArmed;renderSelection();
+});
 $('findChanceButton')?.addEventListener('click',()=>{
   const chance=Number($('desiredChanceInput').value);
   if(!Number.isFinite(chance)||chance<=0||chance>=100){toast('Введите шанс больше 0 и меньше 100%.');return;}
@@ -296,9 +396,10 @@ $('findChanceButton')?.addEventListener('click',()=>{
 });
 function renderPreferences() {
   $('soundToggle').classList.toggle('active',prefs.sound); $('soundToggle').setAttribute('aria-pressed',prefs.sound);
+  $('soundToggle').setAttribute('aria-label',prefs.sound ? 'Выключить звук':'Включить звук');
   $('fastToggle').classList.toggle('active',prefs.fast); $('fastToggle').setAttribute('aria-pressed',prefs.fast);
 }
-for(const [id,key] of [['soundToggle','sound'],['fastToggle','fast']]) $(id).addEventListener('click',()=>{prefs[key]=!prefs[key];renderPreferences();try{localStorage.setItem(PREFS_KEY,JSON.stringify(prefs));}catch{}toast(key==='sound' ? `Звук ${prefs.sound?'включён':'выключен'}`:`Быстрая анимация ${prefs.fast?'включена':'выключена'}`);});
+for(const [id,key] of [['soundToggle','sound'],['fastToggle','fast']]) $(id).addEventListener('click',()=>{prefs[key]=!prefs[key];renderPreferences();savePreferences();if(key==='sound' && prefs.sound)primeAudio();toast(key==='sound' ? `Звук ${prefs.sound?'включён':'выключен'}`:`Быстрая анимация ${prefs.fast?'включена':'выключена'}`);});
 window.addEventListener('storage',async(event)=>{
   if(event.key!==SESSION_KEY) return;
   if(busy){pendingStorageValue=event.newValue;return;}
@@ -317,7 +418,7 @@ async function init() {
     }
   }
   if(!player) showDialog('welcomeDialog');
-  if(mode==='shop')$('shopMax').value=String(Math.max(500,player?.balance||500));
+  $('shopMax').value='';
   renderPlayer();switchMode(mode);await loadTargets();
 }
 init();
