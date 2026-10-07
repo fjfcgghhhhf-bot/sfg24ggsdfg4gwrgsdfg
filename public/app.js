@@ -121,9 +121,9 @@ function renderSelection() {
   const chance = valid ? source.price/target.price*100:0;
   $('winArc').setAttribute('d',arcPath(valid ? chance:50));
   $('chanceValue').textContent = valid ? `${new Intl.NumberFormat('ru-RU',{maximumFractionDigits:2}).format(chance)}%`:'—';
+  renderBoosters(chance);
   $('upgradeButton').disabled = !valid || busy || targetLoading || (luckyArmed && chance<50);
   $('upgradeButton').classList.toggle('spinning',busy);
-  renderBoosters(chance);
   renderMultiplierButtons();
   if (!busy) setStatus(targetLoading ? 'Подбираем цель…':!player ? 'Введите ник и получите 500 ₽ для старта':!source ? 'Купите скин в магазине и выберите его слева':!target ? 'Выберите предмет, который хотите получить':!valid ? 'Стоимость цели должна быть выше стоимости вашего скина':luckyArmed && chance<50 ? 'Для 777 нужен обычный шанс от 50%. Выберите более дешёвую цель.':luckyArmed ? `777: гарантированный успех · обычный шанс ${chance.toFixed(2).replace('.',',')}%`:`Шанс ${chance.toFixed(2).replace('.',',')}% · ${money(source.price)} → ${money(target.price)}`);
 }

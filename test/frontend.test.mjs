@@ -239,6 +239,22 @@ test('777 sends its flag, wins at exactly 50%, and restores the authoritative re
   assert.equal(restored.element('luckyCount').textContent, '2');
 });
 
+test('an exhausted 777 snapshot disarms the booster and re-enables an otherwise valid upgrade immediately', () => {
+  const h = harness(); let session = h.seed(100, 300);
+  session = h.engine.buy(session.token, 'skin-10');
+  for (const price of [20, 40, 80]) {
+    const item = session.player.inventory.find((entry) => entry.price < 100);
+    session = h.engine.upgrade(session.token, item.inventoryId, `skin-${price}`, { lucky: true });
+  }
+  h.evaluate('luckyArmed=true; renderSelection()');
+  assert.equal(h.element('upgradeButton').disabled, true);
+  h.context.otherTabSnapshot = session;
+  h.evaluate('saveSnapshot(otherTabSnapshot)');
+  assert.equal(h.evaluate('luckyArmed'), false);
+  assert.equal(h.element('luckyToggle').disabled, true);
+  assert.equal(h.element('upgradeButton').disabled, false);
+});
+
 test('Phoenix keeps the source on ten losses, decrements only server snapshots, and turns off when exhausted', async () => {
   const h = harness({ random: () => 0 }); const original = h.seed(); h.evaluate('prefs.fast=true');
   await h.dispatch('phoenixToggle', 'click');
