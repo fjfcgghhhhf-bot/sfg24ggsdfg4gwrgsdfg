@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 220" fill="none">
+ <defs><linearGradient id="g" x1="40" y1="35" x2="280" y2="195" gradientUnits="userSpaceOnUse"><stop stop-color="#ffe969"/><stop offset=".5" stop-color="#ffd500"/><stop offset="1" stop-color="#9d7315"/></linearGradient><radialGradient id="b"><stop stop-color="#ffdc17" stop-opacity=".2"/><stop offset="1" stop-color="#ffdc17" stop-opacity="0"/></radialGradient></defs>
+ <ellipse cx="160" cy="114" rx="150" ry="104" fill="url(#b)"/>
+ <g transform="rotate(-9 160 110)"><rect x="43" y="44" width="234" height="140" rx="15" fill="#1c1c1b" stroke="url(#g)" stroke-width="3"/><rect x="52" y="53" width="216" height="122" rx="9" stroke="#b69020" stroke-opacity=".3"/><path d="M60 44h35M43 64v25M225 184h35M277 139v25" stroke="#fff0a0" stroke-width="3"/>
+ <rect x="65" y="68" width="30" height="23" rx="5" fill="url(#g)"/><path d="M74 68v23m11-23v23M65 80h30" stroke="#6c5716"/>
+ <text x="248" y="86" text-anchor="end" font-family="Arial,sans-serif" font-size="13" font-weight="700" letter-spacing="4" fill="#dbb943">SECRET</text>
+ <text x="160" y="130" text-anchor="middle" font-family="monospace" font-weight="700" font-size="29" letter-spacing="3" fill="url(#g)">••••••••••</text>
+ <path d="M147 153v-5a8 8 0 0 1 16 0v5" stroke="#f2cc39" stroke-width="2"/><rect x="143" y="151" width="24" height="18" rx="4" fill="url(#g)"/><circle cx="155" cy="158" r="2" fill="#42350f"/>
+ </g>
+</svg>

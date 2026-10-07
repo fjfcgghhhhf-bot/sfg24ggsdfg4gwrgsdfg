@@ -1,0 +1,374 @@
+[
+  {
+    "name": "Sand Dune",
+    "weapon": "P250",
+    "image": "/assets/skins/p250-sand-dune.png",
+    "rarity": "blue"
+  },
+  {
+    "name": "Urban Dashed",
+    "weapon": "PP-Bizon",
+    "image": "/assets/skins/pp-bizon-urban-dashed.png",
+    "rarity": "blue"
+  },
+  {
+    "name": "Predator",
+    "weapon": "Nova",
+    "image": "/assets/skins/nova-predator.png",
+    "rarity": "blue"
+  },
+  {
+    "name": "Army Recon",
+    "weapon": "MP7",
+    "image": "/assets/skins/mp7-army-recon.png",
+    "rarity": "blue"
+  },
+  {
+    "name": "Off World",
+    "weapon": "Glock-18",
+    "image": "/assets/skins/glock-18-off-world.png",
+    "rarity": "blue"
+  },
+  {
+    "name": "Oceanic",
+    "weapon": "P2000",
+    "image": "/assets/skins/p2000-oceanic.png",
+    "rarity": "blue"
+  },
+  {
+    "name": "Flame Test",
+    "weapon": "Five-SeveN",
+    "image": "/assets/skins/five-seven-flame-test.png",
+    "rarity": "blue"
+  },
+  {
+    "name": "Ice Cap",
+    "weapon": "Tec-9",
+    "image": "/assets/skins/tec-9-ice-cap.png",
+    "rarity": "blue"
+  },
+  {
+    "name": "Oceanic",
+    "weapon": "MAC-10",
+    "image": "/assets/skins/mac-10-oceanic.png",
+    "rarity": "blue"
+  },
+  {
+    "name": "Capillary",
+    "weapon": "MP9",
+    "image": "/assets/skins/mp9-capillary.png",
+    "rarity": "blue"
+  },
+  {
+    "name": "Valence",
+    "weapon": "P250",
+    "image": "/assets/skins/p250-valence.png",
+    "rarity": "blue"
+  },
+  {
+    "name": "Forest Leaves",
+    "weapon": "USP-S",
+    "image": "/assets/skins/usp-s-forest-leaves.png",
+    "rarity": "blue"
+  },
+  {
+    "name": "Survivor Z",
+    "weapon": "FAMAS",
+    "image": "/assets/skins/famas-survivor-z.png",
+    "rarity": "blue"
+  },
+  {
+    "name": "Signal",
+    "weapon": "Galil AR",
+    "image": "/assets/skins/galil-ar-signal.png",
+    "rarity": "purple"
+  },
+  {
+    "name": "Abyss",
+    "weapon": "SSG 08",
+    "image": "/assets/skins/ssg-08-abyss.png",
+    "rarity": "blue"
+  },
+  {
+    "name": "Blue Ply",
+    "weapon": "Desert Eagle",
+    "image": "/assets/skins/desert-eagle-blue-ply.png",
+    "rarity": "blue"
+  },
+  {
+    "name": "Exposure",
+    "weapon": "UMP-45",
+    "image": "/assets/skins/ump-45-exposure.png",
+    "rarity": "purple"
+  },
+  {
+    "name": "Cirrus",
+    "weapon": "MP7",
+    "image": "/assets/skins/mp7-cirrus.png",
+    "rarity": "blue"
+  },
+  {
+    "name": "Apocalypto",
+    "weapon": "Sawed-Off",
+    "image": "/assets/skins/sawed-off-apocalypto.png",
+    "rarity": "purple"
+  },
+  {
+    "name": "Monster Call",
+    "weapon": "MAG-7",
+    "image": "/assets/skins/mag-7-monster-call.png",
+    "rarity": "purple"
+  },
+  {
+    "name": "Moonrise",
+    "weapon": "Glock-18",
+    "image": "/assets/skins/glock-18-moonrise.png",
+    "rarity": "purple"
+  },
+  {
+    "name": "Elite Build",
+    "weapon": "AK-47",
+    "image": "/assets/skins/ak-47-elite-build.png",
+    "rarity": "blue"
+  },
+  {
+    "name": "Evil Daimyo",
+    "weapon": "M4A4",
+    "image": "/assets/skins/m4a4-evil-daimyo.png",
+    "rarity": "purple"
+  },
+  {
+    "name": "Flashback",
+    "weapon": "M4A1-S",
+    "image": "/assets/skins/m4a1-s-flashback.png",
+    "rarity": "purple"
+  },
+  {
+    "name": "Atheris",
+    "weapon": "AWP",
+    "image": "/assets/skins/awp-atheris.png",
+    "rarity": "purple"
+  },
+  {
+    "name": "Cyrex",
+    "weapon": "USP-S",
+    "image": "/assets/skins/usp-s-cyrex.png",
+    "rarity": "purple"
+  },
+  {
+    "name": "Asiimov",
+    "weapon": "P250",
+    "image": "/assets/skins/p250-asiimov.png",
+    "rarity": "pink"
+  },
+  {
+    "name": "Food Chain",
+    "weapon": "MP9",
+    "image": "/assets/skins/mp9-food-chain.png",
+    "rarity": "pink"
+  },
+  {
+    "name": "Disco Tech",
+    "weapon": "MAC-10",
+    "image": "/assets/skins/mac-10-disco-tech.png",
+    "rarity": "pink"
+  },
+  {
+    "name": "Mecha Industries",
+    "weapon": "Desert Eagle",
+    "image": "/assets/skins/desert-eagle-mecha-industries.png",
+    "rarity": "pink"
+  },
+  {
+    "name": "Commemoration",
+    "weapon": "FAMAS",
+    "image": "/assets/skins/famas-commemoration.png",
+    "rarity": "red"
+  },
+  {
+    "name": "Bullet Queen",
+    "weapon": "Glock-18",
+    "image": "/assets/skins/glock-18-bullet-queen.png",
+    "rarity": "red"
+  },
+  {
+    "name": "Neo-Noir",
+    "weapon": "M4A4",
+    "image": "/assets/skins/m4a4-neo-noir.png",
+    "rarity": "red"
+  },
+  {
+    "name": "Cortex",
+    "weapon": "USP-S",
+    "image": "/assets/skins/usp-s-cortex.png",
+    "rarity": "pink"
+  },
+  {
+    "name": "Neon Revolution",
+    "weapon": "AK-47",
+    "image": "/assets/skins/ak-47-neon-revolution.png",
+    "rarity": "red"
+  },
+  {
+    "name": "Chromatic Aberration",
+    "weapon": "AWP",
+    "image": "/assets/skins/awp-chromatic-aberration.png",
+    "rarity": "red"
+  },
+  {
+    "name": "Player Two",
+    "weapon": "M4A1-S",
+    "image": "/assets/skins/m4a1-s-player-two.png",
+    "rarity": "red"
+  },
+  {
+    "name": "Kill Confirmed",
+    "weapon": "USP-S",
+    "image": "/assets/skins/usp-s-kill-confirmed.png",
+    "rarity": "red"
+  },
+  {
+    "name": "Printstream",
+    "weapon": "Desert Eagle",
+    "image": "/assets/skins/desert-eagle-printstream.png",
+    "rarity": "red"
+  },
+  {
+    "name": "The Empress",
+    "weapon": "AK-47",
+    "image": "/assets/skins/ak-47-the-empress.png",
+    "rarity": "red"
+  },
+  {
+    "name": "The Emperor",
+    "weapon": "M4A4",
+    "image": "/assets/skins/m4a4-the-emperor.png",
+    "rarity": "red"
+  },
+  {
+    "name": "Neon Rider",
+    "weapon": "AK-47",
+    "image": "/assets/skins/ak-47-neon-rider.png",
+    "rarity": "red"
+  },
+  {
+    "name": "Asiimov",
+    "weapon": "AWP",
+    "image": "/assets/skins/awp-asiimov.png",
+    "rarity": "red"
+  },
+  {
+    "name": "Printstream",
+    "weapon": "M4A1-S",
+    "image": "/assets/skins/m4a1-s-printstream.png",
+    "rarity": "red"
+  },
+  {
+    "name": "Neo-Noir",
+    "weapon": "AWP",
+    "image": "/assets/skins/awp-neo-noir.png",
+    "rarity": "red"
+  },
+  {
+    "name": "Vulcan",
+    "weapon": "AK-47",
+    "image": "/assets/skins/ak-47-vulcan.png",
+    "rarity": "red"
+  },
+  {
+    "name": "Fade",
+    "weapon": "Glock-18",
+    "image": "/assets/skins/glock-18-fade.png",
+    "rarity": "purple"
+  },
+  {
+    "name": "Fade",
+    "weapon": "AWP",
+    "image": "/assets/skins/awp-fade.png",
+    "rarity": "red"
+  },
+  {
+    "name": "Fire Serpent",
+    "weapon": "AK-47",
+    "image": "/assets/skins/ak-47-fire-serpent.png",
+    "rarity": "red"
+  },
+  {
+    "name": "Superconductor",
+    "weapon": "Sport Gloves",
+    "image": "/assets/skins/sport-gloves-superconductor.png",
+    "rarity": "gold"
+  },
+  {
+    "name": "Fade",
+    "weapon": "Specialist Gloves",
+    "image": "/assets/skins/specialist-gloves-fade.png",
+    "rarity": "gold"
+  },
+  {
+    "name": "Marble Fade",
+    "weapon": "Karambit",
+    "image": "/assets/skins/karambit-marble-fade.png",
+    "rarity": "gold"
+  },
+  {
+    "name": "Fade",
+    "weapon": "Butterfly Knife",
+    "image": "/assets/skins/butterfly-knife-fade.png",
+    "rarity": "gold"
+  },
+  {
+    "name": "Doppler Ruby",
+    "weapon": "M9 Bayonet",
+    "image": "/assets/skins/m9-bayonet-doppler-ruby.png",
+    "rarity": "gold"
+  },
+  {
+    "name": "Doppler Black Pearl",
+    "weapon": "Butterfly Knife",
+    "image": "/assets/skins/butterfly-knife-doppler-black-pearl.png",
+    "rarity": "gold"
+  },
+  {
+    "name": "Doppler Ruby",
+    "weapon": "Butterfly Knife",
+    "image": "/assets/skins/butterfly-knife-doppler-ruby.png",
+    "rarity": "gold"
+  },
+  {
+    "name": "Hedge Maze",
+    "weapon": "Sport Gloves",
+    "image": "/assets/skins/sport-gloves-hedge-maze.png",
+    "rarity": "gold"
+  },
+  {
+    "name": "Pandora's Box",
+    "weapon": "Sport Gloves",
+    "image": "/assets/skins/sport-gloves-pandora-s-box.png",
+    "rarity": "gold"
+  },
+  {
+    "name": "Wild Lotus",
+    "weapon": "AK-47",
+    "image": "/assets/skins/ak-47-wild-lotus.png",
+    "rarity": "red"
+  },
+  {
+    "name": "Howl",
+    "weapon": "M4A4",
+    "image": "/assets/skins/m4a4-howl.png",
+    "rarity": "gold"
+  },
+  {
+    "name": "Dragon Lore",
+    "weapon": "AWP",
+    "image": "/assets/skins/awp-dragon-lore.png",
+    "rarity": "red"
+  },
+  {
+    "name": "Gungnir",
+    "weapon": "AWP",
+    "image": "/assets/skins/awp-gungnir.png",
+    "rarity": "red"
+  }
+]

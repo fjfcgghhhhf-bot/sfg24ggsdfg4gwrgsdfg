@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#111113">
+  <meta name="description" content="Бесплатная игра с апгрейдами скинов CS2. Начни с 500 игровых рублей и доберись до секретного кода.">
+  <title>UPGRADE — путь к секретному коду</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23171719'/%3E%3Cpath d='M13 31 32 15 51 31V43L32 27 13 43Z' fill='%23ffdc00'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" type="module"></script>
+</head>
+<body>
+  <svg class="svg-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="icon-upgrade" viewBox="0 0 24 24"><path d="m4 10 8-7 8 7v6l-8-7-8 7z" fill="currentColor"/><path d="m4 18 8-7 8 7v5l-8-7-8 7z" fill="currentColor" opacity=".5"/></symbol>
+    <symbol id="icon-bag" viewBox="0 0 24 24"><path d="M5 7h14l2 13H3L5 7Z"/><path d="M8 8V6a4 4 0 0 1 8 0v2"/></symbol>
+    <symbol id="icon-shop" viewBox="0 0 24 24"><path d="M4 10v10h16V10M3 4h18l1 6a3 3 0 0 1-5 2 3 3 0 0 1-5 0 3 3 0 0 1-5 0 3 3 0 0 1-5-2l1-6Z"/><path d="M9 20v-6h6v6"/></symbol>
+    <symbol id="icon-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+    <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="icon-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="icon-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 1 1 8 0v3M12 14v3"/></symbol>
+    <symbol id="icon-sound" viewBox="0 0 24 24"><path d="m11 4-6 5H2v6h3l6 5V4Zm4 4a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/></symbol>
+    <symbol id="icon-zap" viewBox="0 0 24 24"><path d="m13 2-9 12h7l-1 8L21 9h-8l1-7Z"/></symbol>
+    <symbol id="icon-reset" viewBox="0 0 24 24"><path d="M3 10a9 9 0 1 1 1 7M3 3v7h7"/></symbol>
+    <symbol id="icon-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></symbol>
+    <symbol id="icon-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+  </svg>
+
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="/" aria-label="UPGRADE — главная"><svg><use href="#icon-upgrade"/></svg><span>UPGRADE<span class="brand-dot">.</span></span></a>
+      <nav class="main-nav" aria-label="Основная навигация"><span class="nav-muted">CS2</span><a class="active" href="/" aria-current="page">UPGRADE</a><span class="free-label"><i></i> БЕСПЛАТНО</span></nav>
+      <div class="header-account">
+        <div class="player-info"><span id="nickname">Игрок</span><strong id="balance">500 ₽</strong></div>
+        <button class="button inventory-button" id="inventoryButton"><svg class="icon"><use href="#icon-bag"/></svg><span>Инвентарь</span><span class="count" id="inventoryCount">0</span></button>
+        <button class="icon-button reset-button" id="resetButton" aria-label="Повторить сессию" title="Повторить сессию"><svg class="icon"><use href="#icon-reset"/></svg><span>Повторить сессию</span></button>
+      </div>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <div class="game-toolbar">
+      <div class="game-options">
+        <button class="small-icon active" id="soundToggle" type="button" aria-label="Выключить звук" aria-pressed="true" title="Звук"><svg class="icon"><use href="#icon-sound"/></svg></button>
+        <button class="small-icon" id="fastToggle" type="button" aria-label="Быстрая анимация" aria-pressed="false" title="Быстрая анимация"><svg class="icon"><use href="#icon-zap"/></svg></button>
+        <span class="toolbar-separator"></span><span class="toolbar-caption">ТВОЙ ПУТЬ К СЕКРЕТНОМУ КОДУ</span>
+      </div>
+      <span class="goal-caption"><svg class="icon"><use href="#icon-lock"/></svg> ЦЕЛЬ: <strong>500 000 ₽</strong></span>
+    </div>
+
+    <section class="upgrade-stage" aria-label="Апгрейд скинов">
+      <div class="display-card source-card">
+        <div class="display-heading"><h1>Выберите предмет для апгрейда</h1><p>Из вашего инвентаря слева</p></div>
+        <div class="item-display" id="sourceDisplay">
+          <div class="display-empty"><div class="ghost-weapon" aria-hidden="true"></div><svg class="empty-chevron"><use href="#icon-upgrade"/></svg><span>Ваш предмет</span></div>
+        </div>
+        <span class="display-corner">01 <span>ИСХОДНЫЙ ПРЕДМЕТ</span></span>
+      </div>
+
+      <div class="wheel-column">
+        <div class="wheel-wrap">
+          <svg class="upgrade-wheel" viewBox="0 0 400 400" role="img" aria-label="Колесо апгрейда: цветная нижняя зона — победа">
+            <defs>
+              <linearGradient id="winGradient" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#ffdc00"/><stop offset=".52" stop-color="#ffdc00"/><stop offset="1" stop-color="#ef3e25"/></linearGradient>
+              <filter id="pointerGlow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            </defs>
+            <circle class="wheel-ticks" cx="200" cy="200" r="190" pathLength="72"/>
+            <circle class="wheel-outline" cx="200" cy="200" r="181"/>
+            <circle class="wheel-track" cx="200" cy="200" r="153"/>
+            <path id="winArc" class="wheel-win" d="M 47 200 A 153 153 0 0 0 353 200"/>
+            <circle class="wheel-inner-ticks" cx="200" cy="200" r="128" pathLength="64"/>
+            <circle class="wheel-disc" cx="200" cy="200" r="116"/>
+            <g id="wheelCenter">
+              <path class="center-chevron" d="m151 172 49-38 49 38v34l-49-39-49 39z"/>
+              <path class="center-chevron shadow" d="m160 216 40-31 40 31v26l-40-31-40 31z"/>
+              <text id="chanceValue" class="chance-value" x="200" y="282" text-anchor="middle">0%</text>
+              <text class="chance-label" x="200" y="299" text-anchor="middle">ШАНС УСПЕХА</text>
+            </g>
+            <g id="pointer" class="wheel-pointer" transform="rotate(180 200 200)">
+              <path d="m200 67-8-23 8 7 8-7-8 23Z" fill="#ffe100" filter="url(#pointerGlow)"/>
+              <path d="M200 51V18" stroke="#ffe100" stroke-width="2"/>
+            </g>
+          </svg>
+          <span class="zone-label lose-label">ПОРАЖЕНИЕ</span>
+          <span class="zone-label win-label">ПОБЕДА</span>
+        </div>
+        <button class="button primary upgrade-button" id="upgradeButton" disabled><svg class="icon"><use href="#icon-upgrade"/></svg><span>Прокачать</span></button>
+        <p class="status-line" id="statusLine" aria-live="polite">Выберите ваш предмет и цель апгрейда</p>
+        <div class="chance-presets" id="chancePresets" aria-label="Подбор цели апгрейда"><div class="multiplier-buttons"><button type="button" data-multiplier="1.5" title="Цель в 1,5 раза дороже">×1.5</button><button type="button" data-multiplier="2" title="Цель в 2 раза дороже">×2</button><button type="button" data-multiplier="5" title="Цель в 5 раз дороже">×5</button><button type="button" data-multiplier="10" title="Цель в 10 раз дороже">×10</button></div><div class="chance-picker"><input type="number" id="desiredChanceInput" placeholder="Шанс, %" min="0.01" max="99.99" step="0.01" inputmode="decimal" aria-label="Желаемый шанс апгрейда в процентах"><button type="button" id="findChanceButton" title="Найти предмет с близким шансом">Подобрать<svg class="icon"><use href="#icon-chevron"/></svg></button></div></div>
+      </div>
+
+      <div class="display-card target-card">
+        <div class="display-heading"><h2>Выберите предмет для апгрейда</h2><p>То, что вы хотите получить</p></div>
+        <div class="item-display" id="targetDisplay">
+          <div class="display-empty"><div class="ghost-weapon" aria-hidden="true"></div><svg class="empty-chevron"><use href="#icon-upgrade"/></svg><span>Желаемый предмет</span></div>
+        </div>
+        <span class="display-corner">02 <span>ЦЕЛЬ АПГРЕЙДА</span></span>
+      </div>
+    </section>
+
+    <section class="catalog-layout" aria-label="Предметы">
+      <div class="catalog-panel source-panel">
+        <div class="panel-header">
+          <div class="panel-tabs" role="tablist" aria-label="Источник предметов">
+            <button class="tab active" id="inventoryTab" role="tab" aria-selected="true" aria-controls="sourceGrid" title="Мой инвентарь"><svg class="icon"><use href="#icon-bag"/></svg></button>
+            <button class="tab" id="shopTab" role="tab" aria-selected="false" aria-controls="sourceGrid" title="Магазин"><svg class="icon"><use href="#icon-shop"/></svg></button>
+          </div>
+          <h2 id="sourceTitle">Мой инвентарь</h2><span class="panel-counter" id="sourceCount">0 предметов</span>
+        </div>
+        <div class="filter-row" id="shopFilters" hidden>
+          <label class="search-field"><svg class="icon"><use href="#icon-search"/></svg><input id="shopSearch" type="search" placeholder="Поиск скина" aria-label="Поиск скина в магазине"></label>
+          <div class="price-range"><label><span>₽</span><input id="shopMin" type="number" inputmode="numeric" min="0" placeholder="от" aria-label="Минимальная цена в магазине"></label><label><span>₽</span><input id="shopMax" type="number" inputmode="numeric" min="0" placeholder="до" aria-label="Максимальная цена в магазине"></label></div>
+        </div>
+        <div id="sourceGrid" class="item-grid" role="tabpanel" aria-label="Ваши предметы"></div>
+        <div id="sourcePager" class="pagination"></div>
+      </div>
+
+      <div class="catalog-panel target-panel">
+        <div class="panel-header target-panel-header">
+          <svg class="icon yellow"><use href="#icon-upgrade"/></svg><h2>Прокачать до</h2>
+          <div class="target-controls">
+            <select id="targetSort" aria-label="Сортировка предметов"><option value="asc">Цена ↑</option><option value="desc">Цена ↓</option></select>
+            <div class="price-range"><label><span>₽</span><input id="targetMin" type="number" inputmode="numeric" min="0" placeholder="от" aria-label="Минимальная цена цели"></label><label><span>₽</span><input id="targetMax" type="number" inputmode="numeric" min="0" placeholder="до" aria-label="Максимальная цена цели"></label></div>
+          </div>
+        </div>
+        <div class="filter-row target-filter-row"><label class="search-field"><svg class="icon"><use href="#icon-search"/></svg><input id="targetSearch" type="search" placeholder="Найти предмет для апгрейда" aria-label="Поиск цели апгрейда"></label><span class="catalog-hint" id="targetCount"></span></div>
+        <div id="targetGrid" class="item-grid" aria-label="Предметы для апгрейда"></div>
+        <div id="targetPager" class="pagination"></div>
+      </div>
+    </section>
+    <footer class="site-footer"><span><svg class="icon"><use href="#icon-upgrade"/></svg> UPGRADE</span><p>Бесплатная игра · Все цены и рубли — игровые</p><span class="footer-tip">Нижняя цветная зона — победа</span></footer>
+  </main>
+
+  <dialog id="welcomeDialog" class="modal welcome-modal" aria-labelledby="welcomeTitle">
+    <form id="welcomeForm" class="welcome-form">
+      <div class="modal-emblem"><svg><use href="#icon-upgrade"/></svg></div>
+      <p class="eyebrow">ОДИН НИК. ОДНА ЦЕЛЬ.</p><h2 id="welcomeTitle">От 500 ₽ до секретного кода</h2>
+      <p class="modal-description">Покупайте скины, повышайте их стоимость и доберитесь до кода за 500 000 ₽.</p>
+      <label class="input-label" for="nicknameInput">Ваш ник</label><input id="nicknameInput" class="text-input" name="nickname" placeholder="Придумайте ник" minlength="2" maxlength="24" autocomplete="nickname" required>
+      <div class="starting-balance"><span>Стартовый баланс</span><strong>500 ₽ <span>в подарок</span></strong></div>
+      <button class="button primary modal-primary" type="submit">Начать игру<svg class="icon"><use href="#icon-arrow"/></svg></button>
+      <p class="fine-print">Без регистрации и платежей. Прогресс сохраняется в этом браузере.</p><p class="form-error" id="welcomeError" aria-live="polite"></p>
+    </form>
+  </dialog>
+
+  <dialog id="inventoryDialog" class="modal inventory-modal" aria-labelledby="inventoryTitle">
+    <div class="modal-header"><div><p class="eyebrow">ВАША КОЛЛЕКЦИЯ</p><h2 id="inventoryTitle">Инвентарь</h2></div><button class="icon-button" data-close="inventoryDialog" aria-label="Закрыть инвентарь"><svg class="icon"><use href="#icon-close"/></svg></button></div>
+    <div class="inventory-summary"><span id="inventorySummary">Продайте предметы, чтобы купить новые</span><svg class="icon yellow"><use href="#icon-bag"/></svg></div>
+    <div id="inventoryItems" class="item-grid inventory-grid"></div><p class="inventory-note">При продаже полная стоимость предмета вернётся на игровой баланс.</p>
+  </dialog>
+
+  <dialog id="resetDialog" class="modal small-modal" aria-labelledby="resetTitle">
+    <button class="icon-button modal-close" data-close="resetDialog" aria-label="Закрыть"><svg class="icon"><use href="#icon-close"/></svg></button>
+    <div class="modal-emblem compact"><svg class="icon"><use href="#icon-reset"/></svg></div><h2 id="resetTitle">Начать сначала?</h2><p class="modal-description">Текущий ник, баланс и все предметы будут удалены. Новая игра начнётся с 500 ₽.</p>
+    <div class="modal-actions"><button class="button secondary" data-close="resetDialog">Продолжить игру</button><button class="button primary" id="confirmReset">Повторить сессию</button></div>
+  </dialog>
+
+  <dialog id="resultDialog" class="modal result-modal" aria-label="Результат апгрейда"><button class="icon-button modal-close" data-close="resultDialog" aria-label="Закрыть результат"><svg class="icon"><use href="#icon-close"/></svg></button><div id="resultContent"></div></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

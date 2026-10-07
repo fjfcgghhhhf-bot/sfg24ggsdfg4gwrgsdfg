@@ -1,0 +1,14 @@
+{
+  "name": "upgrade-code-game",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Free CS2 skin upgrade game — from 500 rubles to the encrypted code",
+  "engines": { "node": ">=24.0.0" },
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs",
+    "test": "node --test test/*.test.mjs",
+    "build": "node --check server.mjs && node --check public/app.js"
+  }
+}
