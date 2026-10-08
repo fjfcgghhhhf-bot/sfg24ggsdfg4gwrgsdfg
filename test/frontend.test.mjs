@@ -296,7 +296,7 @@ test('a legacy save with Phoenix charges resumes normally but a loss removes the
 test('rotation schedules ticks while moving and respects muting during the same animation', async () => {
   const h = harness(); h.evaluate('prefs.fast=true; primeAudio()');
   const spinning = h.evaluate('animatePointer(180)');
-  h.frame(50);
+  h.frame(150);
   assert.ok(h.audio.some((oscillator) => oscillator.type === 'triangle' && oscillator.stoppedAt > oscillator.startedAt));
   h.evaluate('prefs.sound=false'); const count = h.audio.length;
   await h.finishAnimation(); await spinning;
@@ -478,4 +478,46 @@ test('reduced motion and no-animation mode apply instantly and invalid saved mod
   }
   const h=harness({preferences:{zoneAnimation:'unknown'}});
   assert.equal(h.evaluate('prefs.zoneAnimation'),'smooth');
+});
+
+test('normal pointer spin starts gently, decelerates for five seconds and lands without a jump',async()=>{
+  const h=harness();h.evaluate('prefs.sound=false');
+  const start=h.evaluate('rotation');const spin=h.evaluate('animatePointer(267.25)');
+  const samples=[start];
+  for(let i=0;i<64;i++){h.frame(100);samples.push(h.evaluate('rotation'));}
+  await spin;
+  const steps=samples.slice(1).map((value,i)=>value-samples[i]);
+  assert.ok(steps.every((step)=>step>=0),'pointer never reverses');
+  assert.ok(steps[0]<steps[3]/5,'gentle takeoff instead of an immediate maximum speed');
+  for(let i=15;i<steps.length;i++)assert.ok(steps[i]<=steps[i-1]+1e-9,'speed decreases throughout the long braking phase');
+  assert.ok(samples[64]-samples[36]>200,'substantial visible movement remains after the old 3.6-second stop');
+  assert.ok(samples[64]-samples[54]>10,'the last second still has a visible slow approach');
+  assert.ok(steps.at(-1)<.2,'last frame reaches the result without a visible snap');
+  assert.equal(((h.evaluate('rotation')%360)+360)%360,267.25);
+  assert.equal(h.pendingFrames,0);
+});
+
+test('pointer landing is identical across frame rates, dropped frames, both speeds and repeated spins',async()=>{
+  for(const fast of [false,true]) for(const step of [1000/144,1000/60,1000/30,230]) {
+    const h=harness({preferences:{fast,sound:false}});
+    for(const angle of [0,359.999,126.75]) {
+      const spin=h.evaluate(`animatePointer(${angle})`);
+      let frames=0;while(h.pendingFrames && frames++<1100)h.frame(step);
+      await spin;assert.equal(h.pendingFrames,0);
+      const landed=((h.evaluate('rotation')%360)+360)%360;
+      assert.ok(Math.abs(landed-angle)<1e-8,`${fast?'fast':'normal'} ${step}ms frames: ${landed}`);
+    }
+  }
+});
+
+test('fast pointer mode retains an extended slowing finish and reduced motion skips the spin',async()=>{
+  const h=harness({preferences:{fast:true,sound:false}});
+  const spin=h.evaluate('animatePointer(90)');h.frame(550);
+  assert.equal(h.pendingFrames,1,'fast spin no longer ends at 550ms');
+  h.frame(1050);const approaching=h.evaluate('rotation');
+  assert.equal(h.pendingFrames,1);h.frame(400);await spin;
+  assert.ok(h.evaluate('rotation')>approaching);assert.equal(h.evaluate('rotation')%360,90);
+  const reduced=harness({reducedMotion:true});
+  const instant=reduced.evaluate('animatePointer(45)');reduced.frame(16);await instant;
+  assert.equal(reduced.evaluate('rotation')%360,45);assert.equal(reduced.pendingFrames,0);assert.equal(reduced.audio.length,0);
 });

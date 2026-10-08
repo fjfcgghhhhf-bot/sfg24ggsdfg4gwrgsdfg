@@ -379,17 +379,31 @@ async function pickMultiplier(multiplier,notify=true) {
   } catch(error) { if(seq===selectionSequence){activeMultiplier=null;toast(error.message);} }
   finally {if(seq===selectionSequence){targetLoading=false;renderSelection();}}
 }
+function pointerProgress(t) {
+  // Integrate a continuous speed curve: gentle acceleration, a short cruise,
+  // then braking over 78% of the spin. Speed and acceleration meet smoothly
+  // at both joins and reach zero at the final angle without a bounce.
+  const accelerate=.1,cruise=.12,brake=1-accelerate-cruise;
+  const total=accelerate/2+cruise+brake/2;
+  if(t<=0)return 0;
+  if(t>=1)return 1;
+  if(t<accelerate){const u=t/accelerate;return accelerate*(u**3-u**4/2)/total;}
+  if(t<accelerate+cruise)return (accelerate/2+t-accelerate)/total;
+  const u=(t-accelerate-cruise)/brake;
+  return (accelerate/2+cruise+brake*(u-u**3+u**4/2))/total;
+}
 async function animatePointer(angle) {
-  const duration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0:prefs.fast ? 550:3600;
+  const fast=prefs.fast;
+  const duration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0:fast ? 2000:6400;
   const start = rotation;
   const normalized = ((rotation%360)+360)%360;
-  const end = rotation + (prefs.fast ? 720:1800) + ((angle-normalized+360)%360);
+  const end = rotation + (fast ? 720:1800) + ((angle-normalized+360)%360);
   await new Promise((resolve)=>{
     const begins = performance.now();
     let lastTick = -1000, lastSector=Math.floor(start/24);
     function frame(now) {
-      const t = duration ? Math.min(1,(now-begins)/duration):1;
-      rotation = start+(end-start)*(1-Math.pow(1-t,4));
+      const t = duration ? Math.min(1,Math.max(0,(now-begins)/duration)):1;
+      rotation = t===1 ? end:start+(end-start)*pointerProgress(t);
       $('pointer').setAttribute('transform',`rotate(${rotation} 200 200)`);
       const sector=Math.floor(rotation/24);
       if(duration && t<1 && sector!==lastSector && now-lastTick>=35){spinTick();lastTick=now;lastSector=sector;}
