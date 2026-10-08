@@ -77,7 +77,9 @@ function harness({ random = () => 0.5, engine, savedToken, preferences, intercep
       else if (path === '/api/session') result = engine.start(body.nickname);
       else if (path === '/api/resume') result = engine.resume(body.token);
       else if (path === '/api/buy') result = engine.buy(body.token, body.itemId);
+      else if (path === '/api/buy-cart') result = engine.buyCart(body.token, body.items);
       else if (path === '/api/sell') result = engine.sell(body.token, body.inventoryId);
+      else if (path === '/api/sell-all') result = engine.sellAll(body.token);
       else if (path === '/api/upgrade') result = engine.upgrade(body.token, body.inventoryId, body.targetId, { lucky: body.lucky });
       else if (path === '/api/reset') result = engine.reset(body.token);
       else throw new Error(`Unexpected route: ${path}`);
@@ -309,4 +311,90 @@ test('a reset from another tab during animation is applied after the spin', asyn
   await h.storageEvent(null); assert.equal(h.reloads, 0);
   await h.finishAnimation(); await spinning;
   assert.equal(h.reloads, 1); assert.equal(h.storage.has(SESSION_KEY), false);
+});
+
+test('cart keeps quantities across catalog pages and checkout buys once without changing the shop or selected skin', async () => {
+  const gate=deferred();
+  const h=harness({intercept:(request)=>request.path==='/api/buy-cart'?gate.promise:undefined});
+  h.seed();const originalId=h.evaluate('source.inventoryId');
+  await h.evaluate('mode="shop";loadShop()');
+  await h.clickDataset({action:'add-cart',key:'skin-10'});
+  await h.clickDataset({action:'add-cart',key:'skin-10'});
+  await h.clickDataset({action:'add-cart',key:'skin-20'});
+  assert.equal(h.element('cartCount').textContent,'3');
+  assert.equal(h.requests.filter((r)=>r.path==='/api/buy-cart').length,0);
+  await h.evaluate('shopPage=2;loadShop()');
+  assert.equal(h.element('cartCount').textContent,'3');
+  await h.dispatch('cartButton','click');
+  const purchase=h.dispatch('checkoutButton','click');
+  await settled();await h.dispatch('checkoutButton','click');
+  assert.equal(h.requests.filter((r)=>r.path==='/api/buy-cart').length,1);
+  gate.resolve();await purchase;
+  assert.equal(h.evaluate('mode'),'shop');assert.equal(h.evaluate('shopPage'),2);
+  assert.equal(h.evaluate('source.inventoryId'),originalId);
+  assert.equal(h.evaluate('target.price'),200);
+  assert.equal(h.evaluate('player.balance'),360);
+  assert.equal(h.plain('player.inventory').length,4);
+  assert.equal(h.element('cartCount').textContent,'0');
+  assert.equal(h.element('cartDialog').open,false);
+  const restored=h.engine.resume(h.storage.get(SESSION_KEY));
+  assert.equal(restored.player.balance,360);assert.equal(restored.player.inventory.length,4);
+});
+
+test('cart can reduce and remove quantities and prevents checkout above the balance',async()=>{
+  const h=harness();h.seed();await h.evaluate('mode="shop";loadShop()');
+  await h.clickDataset({action:'add-cart',key:'skin-200'});
+  await h.clickDataset({action:'add-cart',key:'skin-200'});
+  await h.clickDataset({action:'add-cart',key:'skin-10'});
+  assert.equal(h.element('checkoutButton').disabled,true);
+  assert.match(h.element('cartNotice').textContent,/Не хватает 10/);
+  await h.evaluate('checkout()');assert.equal(h.requests.filter((r)=>r.path==='/api/buy-cart').length,0);
+  await h.clickDataset({action:'cart-minus',key:'skin-200'});
+  assert.equal(h.element('checkoutButton').disabled,false);
+  await h.clickDataset({action:'cart-remove',key:'skin-200'});
+  await h.clickDataset({action:'cart-minus',key:'skin-10'});
+  assert.equal(h.element('cartCount').textContent,'0');
+  assert.equal(h.element('checkoutButton').disabled,true);
+});
+
+test('a rejected cart is retained and does not partially spend money',async()=>{
+  const h=harness();let session=h.seed();await h.evaluate('mode="shop";loadShop()');
+  await h.clickDataset({action:'add-cart',key:'skin-200'});
+  session=h.engine.buy(session.token,'skin-300');
+  await h.evaluate('checkout()');
+  assert.equal(h.evaluate('player.balance'),100);
+  assert.equal(h.plain('player.inventory').length,2);
+  assert.equal(h.element('cartCount').textContent,'1');
+  assert.equal(h.element('checkoutButton').disabled,true);
+  assert.equal(h.evaluate('mode'),'shop');
+});
+
+test('a lost checkout response restores the purchase and clears the cart without buying twice',async()=>{
+  const engine=createGame({secret:TEST_SECRET,goalCode:'1234567890',artworks:artwork});
+  const h=harness({engine:{...engine,buyCart(...args){engine.buyCart(...args);throw new Error('Connection interrupted');}}});
+  h.seed();await h.evaluate('mode="shop";loadShop()');
+  await h.clickDataset({action:'add-cart',key:'skin-10'});
+  await h.evaluate('checkout()');
+  assert.equal(h.evaluate('player.balance'),390);
+  assert.equal(h.plain('player.inventory').length,2);
+  assert.equal(h.element('cartCount').textContent,'0');
+  await h.evaluate('checkout()');
+  assert.equal(h.requests.filter((r)=>r.path==='/api/buy-cart').length,1);
+  assert.equal(engine.resume(h.storage.get(SESSION_KEY)).player.balance,390);
+});
+
+test('sell all removes skins and the selected source, preserves the code, and disables empty inventory actions',async()=>{
+  const h=harness();let session=h.seed(10,20);
+  session=h.engine.upgrade(session.token,session.player.inventory[0].inventoryId,'code');
+  session=h.engine.buyCart(session.token,[{itemId:'skin-10.03',quantity:2},{itemId:'skin-22.51',quantity:1}]);
+  h.install(session);await h.evaluate('selectSource(player.inventory.find((item)=>item.id!=="code").inventoryId)');
+  const selling=h.clickDataset({action:'sell-all'});await h.clickDataset({action:'sell-all'});await selling;
+  assert.equal(h.requests.filter((r)=>r.path==='/api/sell-all').length,1);
+  assert.equal(h.evaluate('source'),null);
+  assert.equal(h.evaluate('player.balance'),490);
+  assert.deepEqual(h.plain('player.inventory.map((item)=>item.id)'),['code']);
+  assert.equal(h.evaluate('player.unlockedCode'),'1234567890');
+  assert.equal(h.element('sellAllButton').disabled,true);
+  assert.equal(h.element('sellAllInline').disabled,true);
+  assert.equal(h.engine.resume(h.storage.get(SESSION_KEY)).player.balance,490);
 });

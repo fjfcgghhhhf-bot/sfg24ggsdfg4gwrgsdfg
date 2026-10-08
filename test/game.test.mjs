@@ -414,6 +414,46 @@ test('local configuration is stable, private and production never creates a fall
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
+test('bulk cart purchase is atomic, prices come from the catalog, and duplicates get unique inventory IDs',()=>{
+  const engine=game();let session=engine.start('Cart player');
+  for(const items of [[],null,[{itemId:'skin-10',quantity:0}],[{itemId:'skin-10',quantity:1.5}],[{itemId:'skin-10',quantity:'2'}],[{itemId:'skin-10',quantity:201}]])assert.throws(()=>engine.buyCart(session.token,items),isError('INVALID_CART'));
+  assert.throws(()=>engine.buyCart(session.token,[{itemId:'skin-10',quantity:1},{itemId:'code',quantity:1}]),isError('GOAL_NOT_BUYABLE'));
+  assert.throws(()=>engine.buyCart(session.token,[{itemId:'skin-10',quantity:1},{itemId:'skin-499',quantity:1}]),isError('INSUFFICIENT_FUNDS'));
+  assert.equal(engine.resume(session.token).player.balance,500);
+  assert.equal(engine.resume(session.token).player.inventory.length,0);
+  const previous=session.token;
+  session=engine.buyCart(session.token,[{itemId:'skin-10.03',quantity:2,price:0},{itemId:'skin-22.51',quantity:1},{itemId:'skin-10.03',quantity:1}]);
+  assert.deepEqual(session.purchase,{count:4,total:52.6});assert.equal(session.player.balance,447.4);
+  assert.equal(new Set(session.player.inventory.map((item)=>item.inventoryId)).size,4);
+  assert.throws(()=>engine.buyCart(previous,[{itemId:'skin-10',quantity:1}]),isError('STALE_SESSION'));
+  const restarted=game().resume(session.token);assert.equal(restarted.player.balance,447.4);assert.equal(restarted.player.inventory.length,4);
+});
+
+test('cart enforces the inventory capacity on the whole purchase without partial changes',()=>{
+  const engine=game();const base=readFixtureToken(engine.start('Capacity').token);
+  base.inventory=Array.from({length:198},()=>({inventoryId:randomUUID(),itemId:'skin-10'}));
+  const saved=fixtureToken(base);
+  // A fresh process restores the fixture as authoritative state.
+  const restored=game();
+  assert.throws(()=>restored.buyCart(saved,[{itemId:'skin-10',quantity:2},{itemId:'skin-10',quantity:1}]),isError('INVENTORY_FULL'));
+  assert.equal(restored.resume(saved).player.balance,500);
+  const purchased=restored.buyCart(saved,[{itemId:'skin-10',quantity:2}]);assert.equal(purchased.player.inventory.length,200);
+});
+
+test('sell all sums cents once, preserves the final reward, rejects replay and leaves empty sales unchanged',()=>{
+  const engine=game({random:()=>.5});let session=engine.start('Collector');
+  assert.throws(()=>engine.sellAll(session.token),isError('NO_ITEMS_TO_SELL'));
+  session=engine.buy(session.token,'skin-10');session=engine.upgrade(session.token,session.player.inventory[0].inventoryId,'code');
+  session=engine.buyCart(session.token,[{itemId:'skin-10.03',quantity:2},{itemId:'skin-22.51',quantity:1}]);
+  const previous=session.token;
+  session=engine.sellAll(session.token);
+  assert.deepEqual(session.sale,{count:3,total:42.57});assert.equal(session.player.balance,490);
+  assert.deepEqual(session.player.inventory.map((item)=>item.id),['code']);assert.equal(session.player.unlockedCode,goalCode);
+  assert.throws(()=>engine.sellAll(previous),isError('STALE_SESSION'));
+  assert.throws(()=>engine.sellAll(session.token),isError('NO_ITEMS_TO_SELL'));
+  assert.deepEqual(game().resume(session.token).player,session.player);
+});
+
 test('HTTP flow, safe static serving, JSON validation and private data boundaries', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'upgrade-http-'));
   await writeFile(path.join(directory, 'index.html'), '<!doctype html><title>Upgrade</title>');
@@ -434,6 +474,11 @@ test('HTTP flow, safe static serving, JSON validation and private data boundarie
     const initial = await post('/api/session', { nickname: 'Tester' });
     assert.equal(initial.status, 200);
     assert.deepEqual(initial.payload.player.boosters, initialBoosters);
+    const shopper=await post('/api/session',{nickname:'Bulk HTTP'});
+    const cart=await post('/api/buy-cart',{token:shopper.payload.token,items:[{itemId:'skin-10.03',quantity:2}]});
+    assert.equal(cart.status,200);assert.equal(cart.payload.player.balance,479.94);
+    const all=await post('/api/sell-all',{token:cart.payload.token});
+    assert.equal(all.status,200);assert.equal(all.payload.player.balance,500);assert.equal(all.payload.player.inventory.length,0);
     const exact = await (await fetch(base + '/api/item?id=skin-22.51')).json();
     assert.equal(exact.price, 22.51);
     const exactList = await (await fetch(base + '/api/catalog?min=22.51&max=22.51')).json();

@@ -13,6 +13,8 @@ let prefs = {sound:true,fast:false,multipliers:[...DEFAULT_MULTIPLIERS]};
 let luckyArmed = false, targetLoading = false, activeMultiplier = 2;
 let pendingStorageValue;
 const cache = new Map([['code',goal]]);
+const cart = new Map();
+let shopItems = [];
 try { token = localStorage.getItem(SESSION_KEY); prefs = {...prefs,...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')}; } catch { /* Storage warning shown when saving. */ }
 if (!Array.isArray(prefs.multipliers) || prefs.multipliers.length!==4 || prefs.multipliers.some((x)=>!Number.isFinite(x)||x<1.01||x>50000)) prefs.multipliers=[...DEFAULT_MULTIPLIERS];
 function savePreferences() { try {localStorage.setItem(PREFS_KEY,JSON.stringify(prefs));} catch {} }
@@ -88,14 +90,15 @@ function flushOtherTab() {
 }
 function card(item, action, selected = false) {
   const key = action === 'select-source' || action === 'sell' ? item.inventoryId:item.id;
-  const disabled = busy || (action === 'buy' && (!player || player.balance < item.price));
-  const actionText = {buy:'Купить',sell:'Продать','select-source':'Выбрать','select-target':item.id === 'code' ? 'Конечная цель':'Выбрать'}[action];
+  const quantity = action === 'add-cart' ? cart.get(item.id) || 0 : 0;
+  const disabled = busy || (action === 'add-cart' && !player);
+  const actionText = {'add-cart':quantity ? `В корзине: ${quantity} · ещё +1`:'В корзину',sell:'Продать','select-source':'Выбрать','select-target':item.id === 'code' ? 'Конечная цель':'Выбрать'}[action];
   const label = `${item.weapon} ${item.name}, ${money(item.price)}. ${actionText}`;
-  return `<button type="button" class="item-card rarity-${Object.hasOwn(colors,item.rarity)?item.rarity:'gold'} ${item.id === 'code' ? 'code-card':''} ${selected ? 'selected':''}" data-action="${action}" data-key="${esc(key)}" aria-label="${esc(label)}" ${disabled ? 'disabled':''} aria-pressed="${selected}">
+  return `<button type="button" class="item-card rarity-${Object.hasOwn(colors,item.rarity)?item.rarity:'gold'} ${item.id === 'code' ? 'code-card':''} ${selected ? 'selected':''} ${quantity ? 'in-cart':''}" data-action="${action}" data-key="${esc(key)}" aria-label="${esc(label)}" ${disabled ? 'disabled':''} aria-pressed="${selected || quantity>0}">
     <span class="item-price">${money(item.price)}</span><span class="item-wear">${item.id === 'code' ? 'LOCKED':({'Прямо с завода':'FN','Немного поношенное':'MW','После полевых испытаний':'FT','Поношенное':'WW','Закалённое в боях':'BS'}[item.wear] || 'FN')}</span>
     <img class="item-image" src="${esc(item.image)}" alt="${esc(`${item.weapon} | ${item.name}`)}" loading="lazy" width="220" height="150">
     <span class="item-type">${esc(item.weapon)}</span><span class="item-name">${esc(item.name)}</span>
-    <span class="item-action">${selected ? 'Выбрано':actionText}${action === 'sell' ? ` · ${money(item.price)}`:''}</span>
+    ${quantity ? `<span class="cart-quantity-badge">×${quantity}</span>`:''}<span class="item-action">${selected ? 'Выбрано':actionText}${action === 'sell' ? ` · ${money(item.price)}`:''}</span>
   </button>`;
 }
 function empty(text, action = '') { return `<div class="grid-empty"><svg aria-hidden="true"><use href="#icon-bag"/></svg><strong>${esc(text)}</strong>${action}</div>`; }
@@ -165,7 +168,9 @@ function renderPlayer() {
   $('resetButton').disabled = !player || busy;
   renderSelection();
   if (mode === 'inventory') renderInventoryGrid();
+  else renderShopGrid();
   renderInventoryModal();
+  renderCart();
   document.body.classList.toggle('goal-unlocked',Boolean(player?.unlockedCode));
   $('goalReward').hidden=!player?.unlockedCode;
   $('goalCode').textContent=player?.unlockedCode || '';
@@ -180,6 +185,49 @@ function renderInventoryModal() {
   if (!$('inventoryItems')) return;
   $('inventoryItems').innerHTML = player?.inventory.length ? player.inventory.map((i) => i.id === 'code' ? `<div class="unlocked-prize"><img src="/assets/code.svg" alt="Код"><strong>Цель достигнута</strong><code>${esc(player.unlockedCode || '••••••••••')}</code><button class="button primary" data-action="copy-code">Скопировать код</button></div>`:card(i,'sell')).join(''):empty('Ваш инвентарь пуст','<span>Предметы появятся здесь после покупки или удачного апгрейда.</span>');
   if ($('inventorySummary')) $('inventorySummary').textContent = `${player?.inventory.length || 0} предметов · Баланс ${money(player?.balance || 0)}`;
+  const sellable=player?.inventory.filter((item)=>item.id!=='code') || [];
+  const total=sellable.reduce((sum,item)=>sum+Math.round(item.price*100),0)/100;
+  for(const id of ['sellAllButton','sellAllInline']) {
+    $(id).disabled=busy||!sellable.length;
+    $(id).textContent='Продать всё';
+    $(id).title=`Продать ${sellable.length} скинов за ${money(total)}`;
+  }
+  $('sellAllInline').hidden=mode!=='inventory';
+}
+function cartTotals() {
+  let count=0,cents=0;
+  for(const [id,quantity] of cart){count+=quantity;cents+=Math.round(cache.get(id).price*100)*quantity;}
+  return {count,cents};
+}
+function renderShopGrid() {
+  if(mode!=='shop')return;
+  $('sourceGrid').innerHTML=shopItems.length ? shopItems.map((item)=>card(item,'add-cart')).join(''):empty('Скинов с такими параметрами нет','<span>Попробуйте изменить поиск или цену.</span>');
+}
+function renderCart() {
+  const {count,cents}=cartTotals();
+  const balance=Math.round((player?.balance || 0)*100);
+  const full=(player?.inventory.length || 0)+count>200;
+  $('shopCartBar').hidden=mode!=='shop';
+  $('cartCount').textContent=count;
+  $('cartButton').disabled=busy||!player;
+  $('cartSummary').textContent=count ? `${count} шт. · ${money(cents/100)}`:'Добавляйте скины в корзину';
+  $('cartTotal').textContent=money(cents/100);
+  $('checkoutButton').disabled=busy||!player||!count||cents>balance||full;
+  $('checkoutButton').textContent=busy ? 'Подождите…':`Купить${count ? ` · ${money(cents/100)}`:''}`;
+  $('cartNotice').textContent=full ? 'В инвентаре помещается 200 предметов. Уменьшите корзину или продайте скины.':cents>balance ? `Не хватает ${money((cents-balance)/100)}. Уберите часть скинов из корзины.`:`На балансе: ${money(balance/100)}`;
+  $('cartNotice').classList.toggle('error',full||cents>balance);
+  $('cartItems').innerHTML=count ? [...cart].map(([id,quantity])=>{
+    const item=cache.get(id);
+    return `<div class="cart-row"><img src="${esc(item.image)}" alt="${esc(item.name)}" width="80" height="58"><div class="cart-item-info"><span>${esc(item.weapon)}</span><strong>${esc(item.name)}</strong><small>${money(item.price)} за шт.</small></div><div class="cart-stepper"><button type="button" data-action="cart-minus" data-key="${esc(id)}" aria-label="Уменьшить количество ${esc(item.name)}" ${busy?'disabled':''}>−</button><span>${quantity}</span><button type="button" data-action="add-cart" data-key="${esc(id)}" aria-label="Добавить ${esc(item.name)}" ${busy||count>=200?'disabled':''}>+</button></div><strong class="cart-line-total">${money(Math.round(item.price*100)*quantity/100)}</strong><button class="icon-button cart-remove" type="button" data-action="cart-remove" data-key="${esc(id)}" aria-label="Убрать ${esc(item.name)} из корзины" ${busy?'disabled':''}><svg class="icon"><use href="#icon-close"/></svg></button></div>`;
+  }).join(''):empty('Корзина пуста','<span>Выберите скины в магазине. Можно добавить несколько одинаковых.</span>');
+}
+function changeCart(id,change) {
+  if(busy||!player)return;
+  const item=cache.get(id);if(!item||id==='code')return;
+  if(change>0 && cartTotals().count>=200){toast('В корзине может быть не больше 200 скинов.');return;}
+  const quantity=change===null ? 0:(cart.get(id)||0)+change;
+  if(quantity>0)cart.set(id,quantity);else cart.delete(id);
+  renderCart();renderShopGrid();
 }
 function pager(element,page,pages,total,side) {
   $(element).innerHTML = `<button type="button" data-action="page" data-side="${side}" data-page="${page-1}" ${page<=1?'disabled':''} aria-label="Предыдущая страница">←</button><span>${total ? `${page} / ${pages}`:'Нет предметов'}<small>${new Intl.NumberFormat('ru-RU').format(total)} предложений</small></span><button type="button" data-action="page" data-side="${side}" data-page="${page+1}" ${page>=pages?'disabled':''} aria-label="Следующая страница">→</button>`;
@@ -192,8 +240,9 @@ async function loadShop() {
     const data = await api(`catalog?${params}`);
     if (seq !== shopSequence || mode !== 'shop') return;
     const items = data.items.filter((i)=>i.id !== 'code'); items.forEach((i)=>cache.set(i.id,i));
+    shopItems=items;
     if($('sourceCount')) $('sourceCount').textContent=`${new Intl.NumberFormat('ru-RU').format(data.total)} скинов`;
-    $('sourceGrid').innerHTML = items.length ? items.map((i)=>card(i,'buy')).join(''):empty('Скинов с такими параметрами нет','<span>Попробуйте изменить поиск или цену.</span>');
+    renderShopGrid();
     pager('sourcePager',data.page,data.pages,data.total,'shop'); renderSelection();
   } catch(error) { if(seq===shopSequence) $('sourceGrid').innerHTML = empty(error.message,'<button class="button" data-action="retry-shop">Повторить</button>'); }
 }
@@ -215,20 +264,29 @@ function switchMode(next) {
   $('inventoryTab').classList.toggle('active',mode==='inventory'); $('shopTab').classList.toggle('active',mode==='shop');
   $('inventoryTab').setAttribute('aria-selected',mode==='inventory'); $('shopTab').setAttribute('aria-selected',mode==='shop');
   $('shopFilters').hidden = mode !== 'shop';
+  $('sellAllInline').hidden=mode!=='inventory';renderCart();
   if(mode==='shop') loadShop(); else renderInventoryGrid();
 }
-async function buy(itemId) {
-  if(busy || !player) return;
-  busy = true; renderPlayer();
+async function checkout() {
+  const {count,cents}=cartTotals();
+  if(busy||!player||!count||cents>Math.round(player.balance*100)||player.inventory.length+count>200)return;
+  const items=[...cart].map(([itemId,quantity])=>({itemId,quantity}));
+  const previousIds=new Set(player.inventory.map((item)=>item.inventoryId));
+  const complete=(data)=>{saveSnapshot(data);cart.clear();$('cartDialog').close();toast(`Куплено: ${count} шт. за ${money(cents/100)}. Скины в инвентаре.`);};
+  busy=true;renderPlayer();
   try {
-    const previousIds = new Set(player.inventory.map((i)=>i.inventoryId));
-    const data = await api('buy',{token,itemId}); saveSnapshot(data);
-    source = player.inventory.find((i)=>!previousIds.has(i.inventoryId)) || source;
-    toast(`${source?.name || 'Скин'} куплен. Теперь выберите цель справа.`);
-    switchMode('inventory');
-    await pickMultiplier(activeMultiplier || prefs.multipliers[0],false);
-  } catch(error) { toast(error.message); }
-  finally { busy = false; renderPlayer(); if(mode==='shop') loadShop(); loadTargets(); flushOtherTab(); }
+    complete(await api('buy-cart',{token,items}));
+  } catch(error) {
+    if(!error.status || error.code==='STALE_SESSION') {
+      try {
+        const latest=await api('resume',{token});
+        const added=latest.player.inventory.filter((item)=>!previousIds.has(item.inventoryId));
+        if(added.length===count && items.every((entry)=>added.filter((item)=>item.id===entry.itemId).length===entry.quantity)){complete(latest);return;}
+        saveSnapshot(latest);
+      } catch { /* Keep the cart for a later attempt if the server is unavailable. */ }
+    }
+    toast(error.message);
+  } finally {busy=false;renderPlayer();flushOtherTab();}
 }
 async function sell(inventoryId) {
   if(busy) return;
@@ -236,6 +294,17 @@ async function sell(inventoryId) {
   try { const item=player.inventory.find((i)=>i.inventoryId===inventoryId); saveSnapshot(await api('sell',{token,inventoryId})); toast(`Продано за ${money(item.price)}`); }
   catch(error) { toast(error.message); }
   finally { busy=false; renderPlayer(); if(mode==='shop') loadShop(); flushOtherTab(); }
+}
+async function sellAll() {
+  if(busy||!player||!player.inventory.some((item)=>item.id!=='code'))return;
+  busy=true;renderPlayer();
+  try {
+    const data=await api('sell-all',{token});saveSnapshot(data);
+    toast(`Продано: ${data.sale.count} шт. за ${money(data.sale.total)}`);
+  } catch(error) {
+    toast(error.message);
+    if(!error.status)try{saveSnapshot(await api('resume',{token}));}catch{}
+  } finally {busy=false;renderPlayer();flushOtherTab();}
 }
 async function selectSource(id) {
   if(busy) return;
@@ -323,8 +392,11 @@ document.addEventListener('click',async(event)=>{
   const button = event.target.closest('[data-action]');
   if(!button) return;
   const action=button.dataset.action;
-  if(action==='buy') buy(button.dataset.key);
+  if(action==='add-cart') changeCart(button.dataset.key,1);
+  if(action==='cart-minus') changeCart(button.dataset.key,-1);
+  if(action==='cart-remove') changeCart(button.dataset.key,null);
   if(action==='sell') sell(button.dataset.key);
+  if(action==='sell-all') sellAll();
   if(action==='select-source') selectSource(button.dataset.key);
   if(action==='select-target') selectTarget(button.dataset.key);
   if(action==='open-shop') { switchMode('shop'); $('sourceGrid').scrollIntoView({behavior:'smooth',block:'center'}); }
@@ -341,6 +413,8 @@ document.addEventListener('click',async(event)=>{
 $('inventoryTab').addEventListener('click',()=>switchMode('inventory'));
 $('shopTab').addEventListener('click',()=>switchMode('shop'));
 $('inventoryButton').addEventListener('click',()=>{renderInventoryModal();showDialog('inventoryDialog');});
+$('cartButton').addEventListener('click',()=>{renderCart();showDialog('cartDialog');});
+$('checkoutButton').addEventListener('click',checkout);
 $('resetButton').addEventListener('click',()=>showDialog('resetDialog'));
 $('confirmReset').addEventListener('click',async()=>{
   if(busy) return;
