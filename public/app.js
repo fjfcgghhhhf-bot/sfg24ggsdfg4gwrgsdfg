@@ -9,7 +9,13 @@ let player = null, token = null, source = null, target = null, mode = 'shop';
 let busy = false, shopPage = 1, targetPage = 1, rotation = 180;
 let shopSequence = 0, targetSequence = 0, selectionSequence = 0, toastTimer, audioContext;
 const DEFAULT_MULTIPLIERS = [1.5,2,5,10];
-let prefs = {sound:true,fast:false,multipliers:[...DEFAULT_MULTIPLIERS]};
+const ZONE_ANIMATIONS = {
+  smooth:{label:'Плавная',duration:500,ease:(t)=>t*t*(3-2*t)},
+  quick:{label:'Быстрая',duration:180,ease:(t)=>1-Math.pow(1-t,3)},
+  inertia:{label:'Инерция',duration:900,ease:(t)=>1-Math.pow(1-t,5)},
+  none:{label:'Без анимации',duration:0,ease:(t)=>t},
+};
+let prefs = {sound:true,fast:false,multipliers:[...DEFAULT_MULTIPLIERS],zoneAnimation:'smooth'};
 let luckyArmed = false, targetLoading = false, activeMultiplier = 2;
 let pendingStorageValue;
 const cache = new Map([['code',goal]]);
@@ -17,6 +23,7 @@ const cart = new Map();
 let shopItems = [];
 try { token = localStorage.getItem(SESSION_KEY); prefs = {...prefs,...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')}; } catch { /* Storage warning shown when saving. */ }
 if (!Array.isArray(prefs.multipliers) || prefs.multipliers.length!==4 || prefs.multipliers.some((x)=>!Number.isFinite(x)||x<1.01||x>50000)) prefs.multipliers=[...DEFAULT_MULTIPLIERS];
+if (!Object.hasOwn(ZONE_ANIMATIONS,prefs.zoneAnimation)) prefs.zoneAnimation='smooth';
 function savePreferences() { try {localStorage.setItem(PREFS_KEY,JSON.stringify(prefs));} catch {} }
 function primeAudio() {
   if(!prefs.sound) return null;
@@ -111,18 +118,52 @@ function renderDisplay(id,item,isTarget) {
     parent.innerHTML = `<img class="display-image ${item.id === 'code' ? 'display-code':''}" src="${esc(item.image)}" alt="${esc(`${item.weapon} ${item.name}`)}"><div class="display-type">${esc(item.weapon)}</div><div class="display-name">${esc(item.name)}</div><div class="display-price">${money(item.price)}</div>${item.id === 'code' ? '<span class="encrypted-label">10 цифр · откроется после победы</span>':isTarget ? `<button class="find-in-shop" data-action="find-in-shop" data-key="${esc(item.id)}" ${busy?'disabled':''}>Найти в магазине <span>↗</span></button>`:''}`;
   }
 }
-function arcPath(percent) {
-  const sweep = Math.min(359.999,Math.max(.001,360*percent/100));
-  const radius = 153;
-  const point = (angle) => [200 + radius*Math.sin(angle*Math.PI/180),200-radius*Math.cos(angle*Math.PI/180)];
-  const start = point(180-sweep/2), end = point(180+sweep/2);
-  return `M ${start[0]} ${start[1]} A ${radius} ${radius} 0 ${sweep>180?1:0} 1 ${end[0]} ${end[1]}`;
+function createSectorAnimator(element,initial=50) {
+  let value=initial,target=initial,animation=null,frameId=null;
+  const reduced=()=>window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function paint(percent) {
+    value=Math.min(100,Math.max(0,percent));
+    // The path stays a full circle. Only its visible length changes, with both
+    // boundaries always equidistant from the bottom; no SVG arc-flag morphing.
+    element.setAttribute('stroke-dasharray',`${value} ${100-value}`);
+    element.setAttribute('stroke-dashoffset',String(-(50-value/2)));
+  }
+  function stop() {if(frameId!==null)cancelAnimationFrame(frameId);frameId=null;animation=null;}
+  function sample(now) {
+    if(!animation)return;
+    const t=reduced() ? 1:Math.min(1,Math.max(0,(now-animation.start)/animation.duration));
+    paint(t===1 ? target:animation.from+(target-animation.from)*animation.ease(t));
+    if(t===1)stop();
+  }
+  function frame(now) {frameId=null;sample(now);if(animation)frameId=requestAnimationFrame(frame);}
+  paint(value);
+  return {
+    get value(){return value;},get target(){return target;},get running(){return animation!==null;},
+    set(percent,{immediate=false,style=prefs.zoneAnimation}={}) {
+      if(!Number.isFinite(percent))return;
+      const next=Math.min(100,Math.max(0,percent));
+      const option=ZONE_ANIMATIONS[style] || ZONE_ANIMATIONS.smooth;
+      if(immediate || reduced() || !option.duration){stop();target=next;paint(next);return;}
+      if(next===target)return;
+      // Interrupt at the current visual position, never at the old endpoint.
+      sample(performance.now());stop();target=next;
+      if(value===target)return;
+      animation={from:value,start:performance.now(),duration:option.duration,ease:option.ease};
+      frameId=requestAnimationFrame(frame);
+    },
+    finish(){stop();paint(target);},
+  };
 }
+const winSector=createSectorAnimator($('winArc'));
+const previewSector=createSectorAnimator($('zonePreviewArc'));
 function renderSelection() {
   renderDisplay('sourceDisplay',source,false); renderDisplay('targetDisplay',target,true);
   const valid = source && target && target.price > source.price;
   const chance = valid ? source.price/target.price*100:0;
-  $('winArc').setAttribute('d',arcPath(valid ? chance:50));
+  // Keep the result's zone after the source is consumed. Before a spin starts,
+  // settle to the actual chance so the pointer always uses the correct sector.
+  winSector.set(valid ? chance:winSector.target,{immediate:busy});
+  $('zoneAnimationButton').disabled=busy;
   $('chanceValue').textContent = valid ? `${new Intl.NumberFormat('ru-RU',{maximumFractionDigits:2}).format(chance)}%`:'—';
   renderBoosters(chance);
   $('upgradeButton').disabled = !valid || busy || targetLoading || (luckyArmed && chance<50);
@@ -467,7 +508,38 @@ function renderPreferences() {
   $('soundToggle').classList.toggle('active',prefs.sound); $('soundToggle').setAttribute('aria-pressed',prefs.sound);
   $('soundToggle').setAttribute('aria-label',prefs.sound ? 'Выключить звук':'Включить звук');
   $('fastToggle').classList.toggle('active',prefs.fast); $('fastToggle').setAttribute('aria-pressed',prefs.fast);
+  renderZonePreferences();
 }
+function renderZonePreferences() {
+  const option=ZONE_ANIMATIONS[prefs.zoneAnimation];
+  $('zoneAnimationLabel').textContent=option.label;
+  $('zoneSelectionStatus').textContent=`Выбрано: ${option.label}. Сохранено.`;
+  for(const key of Object.keys(ZONE_ANIMATIONS)) {
+    $(`zone-${key}`).setAttribute('aria-pressed',String(key===prefs.zoneAnimation));
+    $(`zone-${key}`).classList.toggle('active',key===prefs.zoneAnimation);
+  }
+}
+function previewZone(percent,replay=false) {
+  const next=Math.min(99,Math.max(1,percent));
+  if(!Number.isFinite(next))return;
+  $('zonePreviewRange').value=String(next);
+  $('zonePreviewValue').textContent=`${next}%`;
+  if(replay)previewSector.set(next>50 ? 15:85,{immediate:true});
+  previewSector.set(next);
+}
+$('zoneAnimationButton').addEventListener('click',()=>{
+  if(busy)return;
+  renderZonePreferences();showDialog('zoneAnimationDialog');previewZone(75,true);
+});
+for(const key of Object.keys(ZONE_ANIMATIONS)) $(`zone-${key}`).addEventListener('click',()=>{
+  if(busy)return;
+  prefs.zoneAnimation=key;savePreferences();winSector.finish();renderZonePreferences();
+  previewZone(Number($('zonePreviewRange').value)||75,true);
+});
+$('zonePreviewRange').addEventListener('input',()=>previewZone(Number($('zonePreviewRange').value)));
+for(const percent of [10,50,75]) $(`zonePreview${percent}`).addEventListener('click',()=>previewZone(percent));
+$('zoneReplay').addEventListener('click',()=>previewZone(Number($('zonePreviewRange').value)||75,true));
+$('zoneAnimationDialog').addEventListener('close',()=>previewSector.finish());
 for(const [id,key] of [['soundToggle','sound'],['fastToggle','fast']]) $(id).addEventListener('click',()=>{prefs[key]=!prefs[key];renderPreferences();savePreferences();if(key==='sound' && prefs.sound)primeAudio();toast(key==='sound' ? `Звук ${prefs.sound?'включён':'выключен'}`:`Быстрая анимация ${prefs.fast?'включена':'выключена'}`);});
 window.addEventListener('storage',async(event)=>{
   if(event.key!==SESSION_KEY) return;

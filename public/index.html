@@ -72,7 +72,7 @@
             <circle class="wheel-ticks" cx="200" cy="200" r="190" pathLength="72"/>
             <circle class="wheel-outline" cx="200" cy="200" r="181"/>
             <circle class="wheel-track" cx="200" cy="200" r="153"/>
-            <path id="winArc" class="wheel-win" d="M 47 200 A 153 153 0 0 0 353 200"/>
+            <path id="winArc" class="wheel-win" d="M 200 47 A 153 153 0 0 1 200 353 A 153 153 0 0 1 200 47" pathLength="100" stroke-dasharray="50 50" stroke-dashoffset="-25"/>
             <circle class="wheel-inner-ticks" cx="200" cy="200" r="128" pathLength="64"/>
             <circle class="wheel-disc" cx="200" cy="200" r="116"/>
             <g id="wheelCenter">
@@ -91,6 +91,7 @@
         </div>
         <button class="button primary upgrade-button" id="upgradeButton" disabled><svg class="icon"><use href="#icon-upgrade"/></svg><span>Прокачать</span></button>
         <p class="status-line" id="statusLine" aria-live="polite">Выберите ваш предмет и цель апгрейда</p>
+        <button class="zone-animation-button" id="zoneAnimationButton" type="button" aria-label="Настроить анимацию зоны победы"><svg class="icon"><use href="#icon-gear"/></svg><span>Анимация зоны</span><strong id="zoneAnimationLabel">Плавная</strong></button>
       </div>
 
       <div class="target-column">
@@ -181,6 +182,27 @@
     <button class="icon-button modal-close" data-close="resetDialog" aria-label="Закрыть"><svg class="icon"><use href="#icon-close"/></svg></button>
     <div class="modal-emblem compact"><svg class="icon"><use href="#icon-reset"/></svg></div><h2 id="resetTitle">Начать сначала?</h2><p class="modal-description">Текущий ник, баланс и все предметы будут удалены. Новая игра начнётся с 500 ₽.</p>
     <div class="modal-actions"><button class="button secondary" data-close="resetDialog">Продолжить игру</button><button class="button primary" id="confirmReset">Повторить сессию</button></div>
+  </dialog>
+
+  <dialog id="zoneAnimationDialog" class="modal zone-modal" aria-labelledby="zoneAnimationTitle">
+    <div class="modal-header"><div><p class="eyebrow">ДВИЖЕНИЕ ПОД ВАШ РИТМ</p><h2 id="zoneAnimationTitle">Анимация зоны победы</h2></div><button class="icon-button" type="button" data-close="zoneAnimationDialog" aria-label="Закрыть выбор анимации"><svg class="icon"><use href="#icon-close"/></svg></button></div>
+    <p class="modal-description">Выберите движение заливки и сравните его на превью.</p>
+    <div class="zone-options" role="group" aria-label="Варианты анимации">
+      <button id="zone-smooth" type="button" class="zone-option active" aria-pressed="true"><span class="zone-option-top"><strong>Плавная</strong><small>0,5 с</small></span><span>Мягкий разгон и остановка</span></button>
+      <button id="zone-quick" type="button" class="zone-option" aria-pressed="false"><span class="zone-option-top"><strong>Быстрая</strong><small>0,18 с</small></span><span>Короткий, чёткий переход</span></button>
+      <button id="zone-inertia" type="button" class="zone-option" aria-pressed="false"><span class="zone-option-top"><strong>Инерция</strong><small>0,9 с</small></span><span>Быстрый старт, долгое затухание</span></button>
+      <button id="zone-none" type="button" class="zone-option" aria-pressed="false"><span class="zone-option-top"><strong>Без анимации</strong><small>0 с</small></span><span>Мгновенное изменение зоны</span></button>
+    </div>
+    <div class="zone-preview">
+      <svg class="zone-preview-wheel" viewBox="0 0 400 400" role="img" aria-label="Превью зоны победы">
+        <defs><linearGradient id="previewWinGradient" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#ffe33c"/><stop offset=".52" stop-color="#ffdc00"/><stop offset="1" stop-color="#ef3e25"/></linearGradient></defs>
+        <circle class="wheel-track" cx="200" cy="200" r="153"/>
+        <path id="zonePreviewArc" class="wheel-win" d="M 200 47 A 153 153 0 0 1 200 353 A 153 153 0 0 1 200 47" pathLength="100" stroke-dasharray="50 50" stroke-dashoffset="-25"/>
+        <text id="zonePreviewValue" class="zone-preview-value" x="200" y="202" text-anchor="middle">75%</text><text class="zone-preview-caption" x="200" y="233" text-anchor="middle">ПРЕВЬЮ · БЕЗ СТАВКИ</text>
+      </svg>
+      <div class="zone-preview-controls"><label for="zonePreviewRange">Измените размер зоны</label><input id="zonePreviewRange" type="range" min="1" max="99" step="1" value="75"><div class="zone-preview-presets"><button id="zonePreview10" type="button">10%</button><button id="zonePreview50" type="button">50%</button><button id="zonePreview75" type="button">75%</button></div><button class="zone-replay" id="zoneReplay" type="button"><svg class="icon"><use href="#icon-reset"/></svg>Повторить переход</button></div>
+    </div>
+    <div class="zone-modal-footer"><p id="zoneSelectionStatus" role="status">Выбрано: Плавная. Сохранено.</p><button class="button primary" type="button" data-close="zoneAnimationDialog">Готово</button></div>
   </dialog>
 
   <dialog id="multiplierDialog" class="modal multiplier-modal" aria-labelledby="multiplierTitle">

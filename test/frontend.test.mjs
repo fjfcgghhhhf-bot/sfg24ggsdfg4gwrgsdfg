@@ -17,7 +17,7 @@ const artwork = [{ name: 'Test skin', weapon: 'AWP', image: '/assets/test.png', 
 const settled = () => new Promise((resolve) => setImmediate(resolve));
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 
-function harness({ random = () => 0.5, engine, savedToken, preferences, intercept } = {}) {
+function harness({ random = () => 0.5, engine, savedToken, preferences, intercept, reducedMotion=false } = {}) {
   engine ||= createGame({ secret: TEST_SECRET, goalCode: '1234567890', artworks: artwork, random });
   const elements = new Map(), documentListeners = new Map(), windowListeners = new Map();
   const storage = new Map(), frames = new Map(), timers = new Map();
@@ -36,7 +36,7 @@ function harness({ random = () => 0.5, engine, savedToken, preferences, intercep
       get textContent() { return this.text || ''; }, set textContent(value) { this.text = String(value); },
       addEventListener(type, listener) { if (!listeners.has(type)) listeners.set(type, []); listeners.get(type).push(listener); },
       setAttribute(name, value) { attributes.set(name, String(value)); }, getAttribute(name) { return attributes.get(name) ?? null; },
-      showModal() { dialogs.push(id); this.open = true; }, close() { this.open = false; }, scrollIntoView() {},
+      showModal() { dialogs.push(id); this.open = true; }, close() { this.open = false; for(const callback of listeners.get('close') || [])callback(); }, scrollIntoView() {},
       closest(selector) { if (selector === 'svg' && id === 'winArc') return wheel; if (selector === '[data-multiplier]' && this.dataset.multiplier) return this; if (selector === '[data-action]' && this.dataset.action) return this; if (selector === '[data-close]' && this.dataset.close) return this; return null; },
       querySelector(selector) { if (selector === 'button[type="submit"]') return submit; return null; },
     };
@@ -62,7 +62,7 @@ function harness({ random = () => 0.5, engine, savedToken, preferences, intercep
     createGain() { return { gain: param(), connect() {}, disconnect() {} }; }
   }
   const window = {
-    AudioContext, matchMedia: () => ({ matches: false }),
+    AudioContext, matchMedia: () => ({ matches: reducedMotion }),
     addEventListener(type, listener) { if (!windowListeners.has(type)) windowListeners.set(type, []); windowListeners.get(type).push(listener); },
   };
   async function fetchDouble(url, options = {}) {
@@ -94,6 +94,7 @@ function harness({ random = () => 0.5, engine, savedToken, preferences, intercep
     localStorage: { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value)), removeItem: (key) => storage.delete(key) },
     location: { reload() { reloads++; } }, navigator: { clipboard: { writeText: async () => {} } },
     performance: { now: () => clock }, requestAnimationFrame(callback) { const id = nextFrame++; frames.set(id, callback); return id; },
+    cancelAnimationFrame(id) { frames.delete(id); },
     setTimeout(callback, delay) { const id = nextTimer++; timers.set(id, { callback, delay }); return id; }, clearTimeout: (id) => timers.delete(id),
   });
   vm.runInContext(appWithoutStartup, context, { filename: 'public/app.js' });
@@ -134,7 +135,7 @@ function harness({ random = () => 0.5, engine, savedToken, preferences, intercep
     assert.equal(frames.size, 0, 'animation eventually completes');
     await settled();
   }
-  return { engine, context, evaluate, plain, seed, install, dispatch, clickDataset, finishAnimation, frame, requests, storage, dialogs, audio, trace, presets, element: (id) => elements.get(id), get reloads() { return reloads; }, async storageEvent(value) { for (const listener of windowListeners.get('storage') || []) await listener({ key: SESSION_KEY, newValue: value }); } };
+  return { engine, context, evaluate, plain, seed, install, dispatch, clickDataset, finishAnimation, frame, requests, storage, dialogs, audio, trace, presets, element: (id) => elements.get(id), get pendingFrames() { return frames.size; }, get reloads() { return reloads; }, async storageEvent(value) { for (const listener of windowListeners.get('storage') || []) await listener({ key: SESSION_KEY, newValue: value }); } };
 }
 
 test('frontend multiplier preserves 1.5x prices, rounds in cents, and caps at the goal', () => {
@@ -397,4 +398,84 @@ test('sell all removes skins and the selected source, preserves the code, and di
   assert.equal(h.element('sellAllButton').disabled,true);
   assert.equal(h.element('sellAllInline').disabled,true);
   assert.equal(h.engine.resume(h.storage.get(SESSION_KEY)).player.balance,490);
+});
+
+test('all sector animations cross 50% smoothly on a fixed circle, stay centred, and finish at the exact chance',()=>{
+  const circle=pageSource.match(/<path id="winArc"[^>]* d="([^"]+)"/)[1];
+  assert.equal(circle,'M 200 47 A 153 153 0 0 1 200 353 A 153 153 0 0 1 200 47');
+  for(const style of ['smooth','quick','inertia']) {
+    const h=harness({preferences:{zoneAnimation:style}}),arc=h.element('winArc');
+    arc.setAttribute('d',circle);
+    h.evaluate('winSector.set(10,{immediate:true});winSector.set(90)');
+    let previous=10,intermediate=0;
+    for(let frame=0;frame<65;frame++) {
+      h.frame(16);
+      const [win,lose]=arc.getAttribute('stroke-dasharray').split(' ').map(Number);
+      const start=-Number(arc.getAttribute('stroke-dashoffset'));
+      assert.ok(win>=previous && win<=90,`${style} never reverses or overshoots`);
+      assert.ok(Math.abs(win+lose-100)<1e-10);
+      assert.ok(Math.abs(start+win/2-50)<1e-10,'sector remains centred at 180 degrees');
+      assert.equal(arc.getAttribute('d'),circle,'circle geometry never changes');
+      if(win>10 && win<90)intermediate++;
+      previous=win;
+    }
+    assert.ok(intermediate>3);assert.equal(previous,90);assert.equal(h.pendingFrames,0);
+    h.evaluate('winSector.set(0.002)');h.frame(1000);
+    assert.equal(h.evaluate('winSector.value'),.002);
+    h.evaluate('winSector.set(99.998)');h.frame(1000);
+    assert.equal(h.evaluate('winSector.value'),99.998);
+  }
+});
+
+test('rapid sector retargeting starts at the visible position and keeps only one animation frame',()=>{
+  const h=harness();h.evaluate('winSector.set(10,{immediate:true});winSector.set(90)');h.frame(170);
+  let current=h.evaluate('winSector.value');
+  for(const next of [20,80,35,95,5]) {
+    h.evaluate(`winSector.set(${next})`);
+    assert.equal(h.evaluate('winSector.value'),current,'retarget does not jump to an endpoint');
+    assert.equal(h.pendingFrames,1);
+    h.frame(33);current=h.evaluate('winSector.value');
+    assert.ok(Number.isFinite(current));
+  }
+  h.frame(1000);assert.equal(h.evaluate('winSector.value'),5);assert.equal(h.pendingFrames,0);
+});
+
+test('repeated renders do not restart a sector animation and a spin settles the exact zone before sending its request',async()=>{
+  const gate=deferred();const h=harness({intercept:(request)=>request.path==='/api/upgrade'?gate.promise:undefined});
+  h.seed(100,125);h.frame(200);
+  for(let i=0;i<10;i++)h.evaluate('renderSelection()');
+  h.frame(300);assert.equal(h.evaluate('winSector.value'),80);assert.equal(h.pendingFrames,0);
+  h.evaluate('target={...target,id:"skin-400",price:400};renderSelection()');h.frame(40);
+  assert.ok(h.evaluate('winSector.value')>25);
+  const spin=h.evaluate('upgrade()');
+  assert.equal(h.evaluate('winSector.value'),25);assert.equal(h.evaluate('winSector.running'),false);
+  assert.equal(h.element('zoneAnimationButton').disabled,true);
+  gate.resolve();await h.finishAnimation();await spin;
+  assert.equal(h.evaluate('winSector.value'),25,'the result zone does not reset to 50%');
+});
+
+test('animation selection persists, preview stays separate from the game, and closing it cancels its frames',async()=>{
+  const h=harness();h.seed(100,200);const snapshot=h.storage.get(SESSION_KEY);
+  await h.dispatch('zoneAnimationButton','click');
+  assert.equal(h.element('zoneAnimationDialog').open,true);
+  await h.dispatch('zone-inertia','click');h.frame(80);
+  assert.equal(JSON.parse(h.storage.get(PREFS_KEY)).zoneAnimation,'inertia');
+  assert.equal(h.element('zoneAnimationLabel').textContent,'Инерция');
+  await h.dispatch('zonePreview10','click');
+  assert.equal(h.element('zonePreviewValue').textContent,'10%');
+  assert.equal(h.evaluate('winSector.value'),50);assert.equal(h.storage.get(SESSION_KEY),snapshot);
+  assert.equal(h.requests.length,0,'preview never calls game APIs');
+  await h.clickDataset({close:'zoneAnimationDialog'});
+  assert.equal(h.pendingFrames,0);
+  const restored=harness({preferences:JSON.parse(h.storage.get(PREFS_KEY))});
+  restored.evaluate('renderPreferences()');assert.equal(restored.element('zone-inertia').getAttribute('aria-pressed'),'true');
+});
+
+test('reduced motion and no-animation mode apply instantly and invalid saved modes fall back to smooth',()=>{
+  for(const options of [{reducedMotion:true},{preferences:{zoneAnimation:'none'}}]) {
+    const h=harness(options);h.evaluate('winSector.set(12.345)');
+    assert.equal(h.evaluate('winSector.value'),12.345);assert.equal(h.pendingFrames,0);
+  }
+  const h=harness({preferences:{zoneAnimation:'unknown'}});
+  assert.equal(h.evaluate('prefs.zoneAnimation'),'smooth');
 });
