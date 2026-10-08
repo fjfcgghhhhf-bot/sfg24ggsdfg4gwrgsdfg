@@ -370,6 +370,32 @@ test('invalid upgrade is atomic and does not consume an item', () => {
   assert.deepEqual(engine.resume(session.token), session);
 });
 
+test('90 percent is inclusive and even a fractional excess is rejected atomically, including 777', () => {
+  for (const lucky of [false,true]) {
+    let draws=0;
+    const engine=game({random:()=>{draws++;return .5;}});
+    for (const price of [90.01,99.99]) {
+      let session=engine.start('Лимит');session=engine.buy(session.token,`skin-${price}`);
+      assert.throws(()=>engine.upgrade(session.token,session.player.inventory[0].inventoryId,'skin-100',{lucky}),isError('CHANCE_TOO_HIGH'));
+      assert.deepEqual(engine.resume(session.token),session,'no balance, revision, inventory or booster changes');
+    }
+    assert.equal(draws,0,'invalid chance never draws a result');
+    let boundary=engine.start('Ровно 90');boundary=engine.buy(boundary.token,'skin-90');
+    boundary=engine.upgrade(boundary.token,boundary.player.inventory[0].inventoryId,'skin-100',{lucky});
+    assert.equal(boundary.result.chance,90);assert.equal(boundary.result.won,true);
+    assert.equal(boundary.player.boosters.luckyRemaining,lucky ? 2:3);
+    for (const price of [450000,450000.01]) {
+      let session=engine.start('Цель');session=engine.buy(session.token,'skin-100');
+      session=engine.upgrade(session.token,session.player.inventory[0].inventoryId,`skin-${price}`);
+      if(price===450000)assert.equal(engine.upgrade(session.token,session.player.inventory[0].inventoryId,'code',{lucky}).result.chance,90);
+      else {
+        assert.throws(()=>engine.upgrade(session.token,session.player.inventory[0].inventoryId,'code',{lucky}),isError('CHANCE_TOO_HIGH'));
+        assert.deepEqual(engine.resume(session.token),{token:session.token,player:session.player});
+      }
+    }
+  }
+});
+
 test('goal stays secret until won, survives restore, and cannot be sold', () => {
   const engine = game({ random: () => 0.5 });
   let session = engine.start('Игрок');
@@ -491,6 +517,10 @@ test('HTTP flow, safe static serving, JSON validation and private data boundarie
     const invalidBooster = await post('/api/upgrade', { token: bought.payload.token, inventoryId: bought.payload.player.inventory[0].inventoryId, targetId: 'skin-150', lucky: 'true' });
     assert.equal(invalidBooster.status, 400);
     assert.equal(invalidBooster.payload.code, 'INVALID_BOOSTER');
+    const aboveLimit = await post('/api/upgrade', { token: bought.payload.token, inventoryId: bought.payload.player.inventory[0].inventoryId, targetId: 'skin-111.11', lucky: true });
+    assert.equal(aboveLimit.status,400);
+    assert.equal(aboveLimit.payload.code,'CHANCE_TOO_HIGH');
+    assert.deepEqual((await post('/api/resume',{token:bought.payload.token})).payload,bought.payload);
     const invalidChance = await post('/api/upgrade', { token: bought.payload.token, inventoryId: bought.payload.player.inventory[0].inventoryId, targetId: 'skin-200.01', lucky: true });
     assert.equal(invalidChance.status, 400);
     assert.equal(invalidChance.payload.code, 'LUCKY_CHANCE_TOO_LOW');

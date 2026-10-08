@@ -9,6 +9,14 @@ let player = null, token = null, source = null, target = null, mode = 'shop';
 let busy = false, shopPage = 1, targetPage = 1, rotation = 180;
 let shopSequence = 0, targetSequence = 0, selectionSequence = 0, toastTimer, audioContext;
 const DEFAULT_MULTIPLIERS = [1.5,2,5,10];
+const MAX_UPGRADE_CHANCE = 90, MIN_SAVED_MULTIPLIER = 1.12;
+const minimumTargetPrice = (price) => Math.ceil(Math.round(price*100)*100/MAX_UPGRADE_CHANCE)/100;
+const chanceTooHigh = (from,to) => Math.round(from.price*100)*100 > Math.round(to.price*100)*MAX_UPGRADE_CHANCE;
+function chanceLimitMessage() {
+  return source && minimumTargetPrice(source.price)>goal.price
+    ? 'Для апгрейда с шансом до 90% нужен скин не дороже 450 000 ₽. Продайте этот скин и купите более дешёвый.'
+    : `Максимальный шанс — 90%. ${source ? `Выберите цель от ${money(minimumTargetPrice(source.price))}.`:'Выберите более дорогую цель.'}`;
+}
 const ZONE_ANIMATIONS = {
   smooth:{label:'Плавная',duration:500,ease:(t)=>t*t*(3-2*t)},
   quick:{label:'Быстрая',duration:180,ease:(t)=>1-Math.pow(1-t,3)},
@@ -69,7 +77,8 @@ function connectLiveDrops() {
 window.addEventListener('pagehide',()=>{liveStream?.close();liveStream=null;});
 window.addEventListener('pageshow',()=>connectLiveDrops());
 try { token = localStorage.getItem(SESSION_KEY); prefs = {...prefs,...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')}; } catch { /* Storage warning shown when saving. */ }
-if (!Array.isArray(prefs.multipliers) || prefs.multipliers.length!==4 || prefs.multipliers.some((x)=>!Number.isFinite(x)||x<1.01||x>50000)) prefs.multipliers=[...DEFAULT_MULTIPLIERS];
+if (!Array.isArray(prefs.multipliers) || prefs.multipliers.length!==4) prefs.multipliers=[...DEFAULT_MULTIPLIERS];
+else prefs.multipliers=prefs.multipliers.map((x,index)=>!Number.isFinite(x)||x<MIN_SAVED_MULTIPLIER||x>50000 ? DEFAULT_MULTIPLIERS[index]:x);
 if (!Object.hasOwn(ZONE_ANIMATIONS,prefs.zoneAnimation)) prefs.zoneAnimation='smooth';
 function savePreferences() { try {localStorage.setItem(PREFS_KEY,JSON.stringify(prefs));} catch {} }
 function primeAudio() {
@@ -205,7 +214,8 @@ const winSector=createSectorAnimator($('winArc'));
 const previewSector=createSectorAnimator($('zonePreviewArc'));
 function renderSelection() {
   renderDisplay('sourceDisplay',source,false); renderDisplay('targetDisplay',target,true);
-  const valid = source && target && target.price > source.price;
+  const overLimit = source && target && chanceTooHigh(source,target);
+  const valid = source && target && target.price > source.price && !overLimit;
   const chance = valid ? source.price/target.price*100:0;
   // Keep the result's zone after the source is consumed. Before a spin starts,
   // settle to the actual chance so the pointer always uses the correct sector.
@@ -216,7 +226,7 @@ function renderSelection() {
   $('upgradeButton').disabled = !valid || busy || targetLoading || (luckyArmed && chance<50);
   $('upgradeButton').classList.toggle('spinning',busy);
   renderMultiplierButtons();
-  if (!busy) setStatus(targetLoading ? 'Подбираем цель…':!player ? 'Введите ник и получите 500 ₽ для старта':!source ? 'Купите скин в магазине и выберите его слева':!target ? 'Выберите предмет, который хотите получить':!valid ? 'Стоимость цели должна быть выше стоимости вашего скина':luckyArmed && chance<50 ? 'Для 777 нужен обычный шанс от 50%. Выберите более дешёвую цель.':luckyArmed ? `777: гарантированный успех · обычный шанс ${chance.toFixed(2).replace('.',',')}%`:`Шанс ${chance.toFixed(2).replace('.',',')}% · ${money(source.price)} → ${money(target.price)}`);
+  if (!busy) setStatus(targetLoading ? 'Подбираем цель…':!player ? 'Введите ник и получите 500 ₽ для старта':!source ? 'Купите скин в магазине и выберите его слева':overLimit || minimumTargetPrice(source.price)>goal.price ? chanceLimitMessage():!target ? 'Выберите предмет, который хотите получить':!valid ? 'Стоимость цели должна быть выше стоимости вашего скина':luckyArmed && chance<50 ? 'Для 777 нужен обычный шанс от 50%. Выберите более дешёвую цель.':luckyArmed ? `777: гарантированный успех · обычный шанс ${chance.toFixed(2).replace('.',',')}%`:`Шанс ${chance.toFixed(2).replace('.',',')}% · ${money(source.price)} → ${money(target.price)}`);
 }
 function renderBoosters(chance=0) {
   const remaining=player?.boosters?.luckyRemaining ?? 3;
@@ -232,17 +242,19 @@ function multiplierPrice(price,multiplier) {
   const sourceCents=Math.round(price*100);
   const rawCents=sourceCents*multiplier;
   const targetCents=Math.round(rawCents+Number.EPSILON*Math.max(1,Math.abs(rawCents))*2);
-  return Math.min(500000,Math.max(sourceCents+1,targetCents)/100);
+  return Math.min(500000,Math.max(Math.ceil(sourceCents*100/MAX_UPGRADE_CHANCE),targetCents)/100);
 }
 function renderMultiplierButtons() {
   document.querySelectorAll('[data-multiplier]').forEach((button,index)=>{
     const multiplier=prefs.multipliers[index];
     button.dataset.multiplier=String(multiplier);
     const percent=source ? source.price/multiplierPrice(source.price,multiplier)*100:100/multiplier;
+    const unavailable=Boolean(source && minimumTargetPrice(source.price)>goal.price);
     const label=`×${new Intl.NumberFormat('ru-RU',{maximumFractionDigits:2}).format(multiplier)}`;
-    button.innerHTML=`<span class="multiplier-value">${label}</span><span class="multiplier-chance">${percent.toFixed(2).replace('.',',')}%</span>`;
-    button.disabled=busy;button.classList.toggle('active',activeMultiplier===multiplier);
-    button.setAttribute('aria-label',`${label} · шанс ${percent.toFixed(2).replace('.',',')}%`);
+    const chanceLabel=unavailable ? 'Недоступно':`${percent.toFixed(2).replace('.',',')}%`;
+    button.innerHTML=`<span class="multiplier-value">${label}</span><span class="multiplier-chance">${chanceLabel}</span>`;
+    button.disabled=busy||unavailable;button.classList.toggle('active',activeMultiplier===multiplier);
+    button.setAttribute('aria-label',`${label} · ${unavailable ? chanceLabel:`шанс ${chanceLabel}`}`);
     button.setAttribute('aria-pressed',String(activeMultiplier===multiplier));
   });
   $('multiplierSettings').disabled=busy;
@@ -400,11 +412,13 @@ async function selectSource(id) {
   source = player.inventory.find((i)=>i.inventoryId===id);
   if(!source) return;
   renderPlayer();
-  if(activeMultiplier || !target || target.price<=source.price) await pickMultiplier(activeMultiplier || prefs.multipliers[0],false);
+  if(activeMultiplier || !target || target.price<=source.price || chanceTooHigh(source,target)) await pickMultiplier(activeMultiplier || prefs.multipliers[0],false);
   renderInventoryGrid();
 }
 function selectTarget(id) {
   if(busy) return;
+  const next=cache.get(id);
+  if(source && next && chanceTooHigh(source,next)){toast(chanceLimitMessage());return;}
   selectionSequence++;
   targetLoading=false;activeMultiplier=null;
   target = cache.get(id); renderSelection();
@@ -412,6 +426,8 @@ function selectTarget(id) {
 }
 async function pickMultiplier(multiplier,notify=true) {
   if(!Number.isFinite(multiplier)||multiplier<=1) return;
+  if(multiplier<100/MAX_UPGRADE_CHANCE){toast('Максимальный шанс — 90%. Увеличьте множитель.');return;}
+  if(source && minimumTargetPrice(source.price)>goal.price){target=null;renderSelection();if(notify)toast(chanceLimitMessage());return;}
   activeMultiplier=multiplier;
   if(!source) {renderMultiplierButtons();if(notify)toast('Множитель выбран. Теперь выберите свой скин слева.');return;}
   const seq = ++selectionSequence, sourceId = source.inventoryId;
@@ -483,6 +499,7 @@ async function animatePointer(angle) {
 }
 async function upgrade() {
   if(busy || targetLoading || !source || !target || target.price<=source.price) return;
+  if(chanceTooHigh(source,target)){toast(chanceLimitMessage());return;}
   if(luckyArmed && source.price/target.price<.5){toast('777 доступен только при обычном шансе от 50%.');return;}
   selectionSequence++;
   primeAudio();
@@ -573,7 +590,7 @@ $('restoreMultipliers').addEventListener('click',()=>{DEFAULT_MULTIPLIERS.forEac
 $('multiplierForm').addEventListener('submit',async(event)=>{
   event.preventDefault();if(busy)return;
   const values=DEFAULT_MULTIPLIERS.map((_,i)=>Number($(`multiplier${i}`).value));
-  if(values.some((value)=>!Number.isFinite(value)||value<1.01||value>50000||Math.abs(value*100-Math.round(value*100))>1e-7)){$('multiplierError').textContent='Введите значения от 1,01 до 50 000, не более двух знаков после запятой.';return;}
+  if(values.some((value)=>!Number.isFinite(value)||value<MIN_SAVED_MULTIPLIER||value>50000||Math.abs(value*100-Math.round(value*100))>1e-7)){$('multiplierError').textContent='Введите значения от 1,12 до 50 000, не более двух знаков после запятой. Максимальный шанс — 90%.';return;}
   const activeIndex=prefs.multipliers.indexOf(activeMultiplier);
   prefs.multipliers=values;savePreferences();$('multiplierDialog').close();
   if(activeIndex>=0)await pickMultiplier(values[activeIndex],false);
@@ -585,7 +602,7 @@ $('luckyToggle').addEventListener('click',()=>{
 });
 $('findChanceButton')?.addEventListener('click',()=>{
   const chance=Number($('desiredChanceInput').value);
-  if(!Number.isFinite(chance)||chance<=0||chance>=100){toast('Введите шанс больше 0 и меньше 100%.');return;}
+  if(!Number.isFinite(chance)||chance<=0||chance>MAX_UPGRADE_CHANCE){toast('Введите шанс больше 0 и не выше 90%.');return;}
   if(!busy)pickMultiplier(100/chance);
 });
 function renderPreferences() {
@@ -604,7 +621,7 @@ function renderZonePreferences() {
   }
 }
 function previewZone(percent,replay=false) {
-  const next=Math.min(99,Math.max(1,percent));
+  const next=Math.min(MAX_UPGRADE_CHANCE,Math.max(1,percent));
   if(!Number.isFinite(next))return;
   $('zonePreviewRange').value=String(next);
   $('zonePreviewValue').textContent=`${next}%`;

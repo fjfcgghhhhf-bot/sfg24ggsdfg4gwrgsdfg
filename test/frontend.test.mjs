@@ -267,7 +267,7 @@ test('custom multiplier buttons keep delegated clicks after rerender and ignore 
   assert.ok(h.presets.every((button) => button.disabled));
   h.evaluate('busy=false'); h.element('multiplier0').value = '1';
   await h.dispatch('multiplierForm', 'submit');
-  assert.match(h.element('multiplierError').textContent, /1,01/);
+  assert.match(h.element('multiplierError').textContent, /1,12/);
   assert.equal(h.plain('prefs.multipliers')[0], 1.5);
 });
 
@@ -293,6 +293,55 @@ test('777 refuses a base chance below 50% even when displayed chance rounds to 5
   assert.equal(h.element('upgradeButton').disabled, true);
   await h.evaluate('upgrade()');
   assert.equal(h.requests.filter((r) => r.path === '/api/upgrade').length, 0);
+});
+
+test('custom chance accepts 90, rejects values above it and rounds target cents safely',async()=>{
+  const h=harness();h.seed(90,200);
+  for(const chance of [90.01,95,100]) {
+    h.element('desiredChanceInput').value=String(chance);
+    const count=h.requests.length;
+    await h.dispatch('findChanceButton','click');
+    assert.equal(h.requests.length,count);assert.match(h.element('toast').textContent,/90%/);
+  }
+  h.element('desiredChanceInput').value='90';await h.dispatch('findChanceButton','click');
+  assert.equal(h.evaluate('target.price'),100);assert.equal(h.element('chanceValue').textContent,'90%');
+  assert.equal(h.element('upgradeButton').disabled,false);
+  for(const price of [10,10.01,100,449999.99,450000]) {
+    const target=h.evaluate(`multiplierPrice(${price},100/90)`);
+    assert.ok(Math.round(price*100)*100<=Math.round(target*100)*90,'cent rounding must not allow an excess');
+  }
+  assert.equal(h.evaluate('multiplierPrice(100,100/90)'),111.12);
+});
+
+test('manual target selection, direct upgrade and the goal price cap cannot bypass 90 percent',async()=>{
+  const h=harness();h.seed(90.01,200);
+  h.evaluate('cache.set("skin-100",{...target,id:"skin-100",price:100});selectTarget("skin-100")');
+  assert.equal(h.evaluate('target.price'),200);assert.match(h.element('toast').textContent,/90%/);
+  h.evaluate('target=cache.get("skin-100");renderSelection()');
+  assert.equal(h.element('upgradeButton').disabled,true);
+  assert.equal(h.element('chanceValue').textContent,'—');
+  assert.match(h.element('statusLine').textContent,/90%/);
+  await h.evaluate('upgrade()');assert.equal(h.requests.length,0);
+  const initial=h.seed(100,200);
+  const expensive=h.engine.upgrade(initial.token,initial.player.inventory[0].inventoryId,'skin-450000.01');
+  h.install(expensive,500000);
+  assert.equal(h.element('upgradeButton').disabled,true);
+  assert.ok(h.presets.every((button)=>button.disabled));
+  assert.match(h.element('statusLine').textContent,/450 000/);
+  await h.evaluate('pickMultiplier(2)');assert.equal(h.evaluate('target'),null);
+  await h.evaluate('upgrade()');assert.equal(h.requests.length,0);
+});
+
+test('saved and edited multipliers enforce the 90 percent limit while preserving other preferences',async()=>{
+  const h=harness({preferences:{multipliers:[1.01,1.11,1.12,4],sound:false}});
+  assert.deepEqual(h.plain('prefs.multipliers'),[1.5,2,1.12,4]);
+  assert.equal(h.evaluate('prefs.sound'),false);
+  await h.dispatch('multiplierSettings','click');h.element('multiplier0').value='1.11';
+  await h.dispatch('multiplierForm','submit');
+  assert.match(h.element('multiplierError').textContent,/90%/);
+  assert.equal(h.plain('prefs.multipliers')[0],1.5);
+  h.seed();await h.evaluate('pickMultiplier(1.11)');
+  assert.equal(h.requests.length,0);assert.match(h.element('toast').textContent,/90%/);
 });
 
 test('777 sends its flag, wins at exactly 50%, and restores the authoritative remaining count', async () => {
