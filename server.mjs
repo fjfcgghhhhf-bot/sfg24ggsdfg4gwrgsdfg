@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createGame, GameError } from './lib/game.mjs';
 import { loadConfiguration } from './lib/config.mjs';
 import { createLiveDrops } from './lib/live-drops.mjs';
+import { createPostgresStore } from './lib/store.mjs';
 
 const DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.woff': 'font/woff', '.mp3': 'audio/mpeg', '.wav': 'audio/wav' };
@@ -36,10 +37,11 @@ async function readJSON(request) {
   } catch { throw new GameError('Некорректный JSON.', 'INVALID_JSON'); }
 }
 
-export function createApplication({ game, publicDir = path.join(DIRECTORY, 'public'), trustProxy = false }) {
+export function createApplication({ game, publicDir = path.join(DIRECTORY, 'public'), trustProxy = false, store }) {
   publicDir = path.resolve(publicDir);
   const rates = new Map();
   const liveDrops = createLiveDrops();
+  const run=(fn)=>store ? store.run(()=>{game.battles.tick();return fn();}):Promise.resolve().then(()=>{game.battles.tick();return fn();});
   let lastSweep = 0;
   const server = http.createServer(async (request, response) => {
     response.setHeader('X-Content-Type-Options', 'nosniff');
@@ -66,6 +68,8 @@ export function createApplication({ game, publicDir = path.join(DIRECTORY, 'publ
         }
         if (request.method === 'GET' && url.pathname === '/api/catalog') return sendJSON(response, 200, game.catalog.list(Object.fromEntries(url.searchParams)));
         if (request.method === 'GET' && url.pathname === '/api/item') return sendJSON(response, 200, game.catalog.get(url.searchParams.get('id')));
+        if (request.method === 'GET' && url.pathname === '/api/profile') return sendJSON(response,200,await run(()=>game.profile(url.searchParams.get('id'),url.searchParams.get('page'))));
+        if (request.method === 'GET' && url.pathname === '/api/battles') return sendJSON(response,200,await run(()=>game.battles.list()));
         if (request.method === 'GET' && url.pathname === '/api/live-drops') return sendJSON(response, 200, { drops: liveDrops.list() });
         if (request.method === 'GET' && url.pathname === '/api/live-drops/stream') return liveDrops.connect(response);
         if (request.method !== 'POST') throw new GameError('Метод не поддерживается.', 'METHOD_NOT_ALLOWED', 405);
@@ -79,10 +83,16 @@ export function createApplication({ game, publicDir = path.join(DIRECTORY, 'publ
           '/api/sell-all': () => game.sellAll(body.token),
           '/api/upgrade': () => game.upgrade(body.token, body.inventoryId, body.targetId, { lucky: body.lucky }),
           '/api/reset': () => game.reset(body.token),
+          '/api/battle/state': () => game.battles.state(body.token,body.battleId),
+          '/api/battle/create': () => game.battles.create(body.token,body.amount,body.count),
+          '/api/battle/join': () => game.battles.join(body.token,body.battleId),
+          '/api/battle/cancel': () => game.battles.cancel(body.token,body.battleId),
+          '/api/battle/stop': () => game.battles.stop(body.token,body.battleId),
+          '/api/battle/upgrade': () => game.battles.upgrade(body.token,body.battleId,body.chainId,body.targetId,body.attempt,body.lucky),
         };
         if (!Object.hasOwn(handlers, url.pathname)) throw new GameError('Маршрут не найден.', 'NOT_FOUND', 404);
-        const payload = handlers[url.pathname]();
-        if (url.pathname === '/api/upgrade') liveDrops.publish(payload);
+        const payload = await run(handlers[url.pathname]);
+        if (url.pathname === '/api/upgrade'||url.pathname === '/api/battle/upgrade') liveDrops.publish(payload);
         return sendJSON(response, 200, payload);
       }
       if (request.method !== 'GET' && request.method !== 'HEAD') throw new GameError('Метод не поддерживается.', 'METHOD_NOT_ALLOWED', 405);
@@ -112,6 +122,9 @@ export function createApplication({ game, publicDir = path.join(DIRECTORY, 'publ
   server.requestTimeout = 15_000;
   server.headersTimeout = 10_000;
   server.on('close', () => liveDrops.close());
+  let ticking=false;
+  const timer=setInterval(async()=>{if(ticking)return;ticking=true;try{await run(()=>{});}catch{console.error('Battle timer could not reach storage.');}finally{ticking=false;}},5000);
+  timer.unref();server.on('close',()=>clearInterval(timer));
   return server;
 }
 
@@ -119,7 +132,11 @@ export async function startServer() {
   const config = await loadConfiguration(DIRECTORY);
   const artworks = JSON.parse(await readFile(path.join(DIRECTORY, 'public/assets/skins.json'), 'utf8'));
   const game = createGame({ ...config, artworks });
-  const server = createApplication({ game, trustProxy: process.env.RENDER === 'true' || process.env.TRUST_PROXY === 'true' });
+  if(process.env.NODE_ENV==='production'&&!process.env.DATABASE_URL)throw new Error('DATABASE_URL is required for profiles and battles.');
+  const store=process.env.DATABASE_URL ? await createPostgresStore(game,process.env.DATABASE_URL):undefined;
+  if(store)await store.run(()=>game.battles.tick());
+  const server = createApplication({ game, store, trustProxy: process.env.RENDER === 'true' || process.env.TRUST_PROXY === 'true' });
+  if(store)server.on('close',()=>store.close().catch(()=>{}));
   const port = Number(process.env.PORT || 3000);
   server.listen(port, '0.0.0.0', () => console.log(`Upgrade is ready on http://localhost:${port}`));
   return server;

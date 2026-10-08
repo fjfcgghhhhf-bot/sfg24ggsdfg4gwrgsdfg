@@ -5,7 +5,7 @@ services:
     plan: free
     repo: https://github.com/fjfcgghhhhf-bot/sfg24ggsdfg4gwrgsdfg
     branch: main
-    buildCommand: npm run build && npm test
+    buildCommand: npm ci --omit=dev && npm run build && npm test
     startCommand: npm start
     healthCheckPath: /health
     envVars:
@@ -16,4 +16,6 @@ services:
       - key: SESSION_SECRET
         generateValue: true
       - key: GOAL_CODE
+        sync: false
+      - key: DATABASE_URL
         sync: false

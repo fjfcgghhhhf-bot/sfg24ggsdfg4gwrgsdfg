@@ -9,7 +9,8 @@ import { createGame, GameError } from '../lib/game.mjs';
 // control, or connect to a browser, and never touch a real player's session.
 const appSource = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
 const pageSource = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
-const appWithoutStartup = appSource.replace(/\binit\(\);\s*$/, '');
+const socialSource=await readFile(new URL('../public/social.js',import.meta.url),'utf8');
+const appWithoutStartup = socialSource.replace('export function createSocial','function createSocial')+'\n'+appSource.replace(/^import .*;\r?\n/m,'').replace(/\binit\(\);\s*$/, '');
 const SESSION_KEY = 'upgrade.session.v1';
 const PREFS_KEY = 'upgrade.preferences.v1';
 const TEST_SECRET = 'frontend-test-secret-01234567890123456789';
@@ -88,6 +89,14 @@ function harness({ random = () => 0.5, engine, savedToken, preferences, intercep
       else if (path === '/api/sell-all') result = engine.sellAll(body.token);
       else if (path === '/api/upgrade') result = engine.upgrade(body.token, body.inventoryId, body.targetId, { lucky: body.lucky });
       else if (path === '/api/reset') result = engine.reset(body.token);
+      else if (path === '/api/profile') result=engine.profile(request.query.id,request.query.page);
+      else if (path === '/api/battles') result=engine.battles.list();
+      else if (path === '/api/battle/state') result=engine.battles.state(body.token,body.battleId);
+      else if (path === '/api/battle/create') result=engine.battles.create(body.token,body.amount,body.count);
+      else if (path === '/api/battle/join') result=engine.battles.join(body.token,body.battleId);
+      else if (path === '/api/battle/cancel') result=engine.battles.cancel(body.token,body.battleId);
+      else if (path === '/api/battle/stop') result=engine.battles.stop(body.token,body.battleId);
+      else if (path === '/api/battle/upgrade') result=engine.battles.upgrade(body.token,body.battleId,body.chainId,body.targetId,body.attempt,body.lucky);
       else throw new Error(`Unexpected route: ${path}`);
       return { ok: true, status: 200, json: async () => structuredClone(result) };
     } catch (error) {
@@ -148,6 +157,65 @@ function harness({ random = () => 0.5, engine, savedToken, preferences, intercep
 function feedDrop(id='drop-1') {
   return {id,nickname:'Другой игрок',at:1700000000000,lucky:true,item:{id:'skin-200',name:'Redline',weapon:'AK-47',price:200,image:'/assets/skins/redline.png',rarity:'red'}};
 }
+
+test('LIVE drop opens the correct public profile, including battle history and the best drop',async()=>{
+  const h=harness(),owner=h.engine.start('Другой игрок');
+  let snapshot=h.engine.buy(owner.token,'skin-100');
+  snapshot=h.engine.upgrade(snapshot.token,snapshot.player.inventory[0].inventoryId,'skin-200');
+  h.seed();h.evaluate('connectLiveDrops()');
+  h.streams[0].emit('drop',{...feedDrop(),profileId:owner.player.id});
+  assert.match(h.element('liveFeedList').innerHTML,/data-action="profile"/);
+  await h.clickDataset({action:'profile',key:owner.player.id});
+  assert.equal(h.element('profileDialog').open,true);
+  assert.equal(h.element('profileTitle').textContent,'Другой игрок');
+  assert.match(h.element('profileContent').innerHTML,/САМЫЙ ДОРОГОЙ ДРОП/);
+  assert.match(h.element('profileContent').innerHTML,/ПОБЕДА/);
+  assert.match(h.element('profileContent').innerHTML,/400 ₽/);
+  assert.ok(!h.element('profileContent').innerHTML.includes('1234567890'));
+});
+
+test('battle interface creates equal chains, upgrades, stops and updates the winner balance',async()=>{
+  const h=harness({reducedMotion:true});h.install(h.engine.start('Alice'));
+  h.element('battleDeposit').value='100';h.element('battleChains').value='2';h.element('battleChance').value='50';
+  await h.dispatch('battleCreateForm','submit');
+  assert.equal(h.plain('player.balance'),400);
+  assert.equal(h.element('battleArena').hidden,false);
+  assert.match(h.element('battleSelf').innerHTML,/50 ₽/);
+  const id=h.engine.battles.list().battles[0].id,bob=h.engine.start('Bob');
+  const opponent=h.engine.battles.join(bob.token,id);
+  await h.evaluate('social.refresh()');await settled();
+  assert.equal(h.element('battleControls').hidden,false);
+  assert.equal(h.element('battleUpgradeButton').disabled,false);
+  await h.clickDataset({action:'battle-chance',key:'90'});
+  const chance=Number(h.element('battleChanceValue').textContent.replace('%','').replace(',','.'));
+  assert.ok(chance<=90&&chance>89);
+  await h.clickDataset({action:'battle-chance',key:'50'});
+  const spin=h.dispatch('battleUpgradeButton','click');await h.finishAnimation();await spin;
+  assert.match(h.element('battleSpinStatus').textContent,/Успех/);
+  const request=h.requests.find((r)=>r.path==='/api/battle/upgrade');
+  assert.equal(request.body.lucky,false);assert.equal(request.body.attempt,0);
+  await h.dispatch('battleStopButton','click');
+  assert.equal(h.element('battleControls').hidden,true);
+  h.engine.battles.stop(opponent.token,id);
+  await h.evaluate('social.refresh()');
+  assert.equal(h.plain('player.balance'),600);
+  assert.equal(h.plain('player.inventory.length'),0);
+  assert.match(h.element('battleResult').textContent,/Alice побеждает/);
+  await h.dispatch('battleBackButton','click');await h.evaluate('social.refresh()');
+  assert.equal(h.element('battleLobby').hidden,false);
+  assert.equal(h.element('battleArena').hidden,true);
+});
+
+test('late snapshots cannot roll back a newer balance and a waiting battle can be cancelled',async()=>{
+  const h=harness();const old=h.install(h.engine.start('Alice'));
+  h.element('battleDeposit').value='100';h.element('battleChains').value='2';
+  await h.dispatch('battleCreateForm','submit');
+  h.context.oldSnapshot=old;h.evaluate('saveSnapshot(oldSnapshot)');
+  assert.equal(h.plain('player.balance'),400);
+  await h.dispatch('battleCancelButton','click');
+  assert.equal(h.plain('player.balance'),500);
+  assert.match(h.element('battleResult').textContent,/Взнос возвращён/);
+});
 
 test('live feed escapes names, deduplicates snapshots and limits history to 30 actual events',()=>{
   const h=harness();h.evaluate('connectLiveDrops()');

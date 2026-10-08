@@ -69,7 +69,10 @@ test('all viewers receive real wins, reconnects catch up, and private results ne
     assert.deepEqual(snapshot,{ event:'snapshot',data:[codeA.data,a.data] });
     const publicFeed = await (await fetch(base+'/api/live-drops')).json();
     assert.deepEqual(publicFeed.drops,snapshot.data);
-    for (const drop of publicFeed.drops) assert.deepEqual(Object.keys(drop).sort(),['at','id','item','lucky','nickname']);
+    for (const drop of publicFeed.drops) assert.deepEqual(Object.keys(drop).sort(),['at','id','item','lucky','mode','nickname','profileId']);
+    const profile=await (await fetch(base+'/api/profile?id='+a.data.profileId)).json();
+    assert.equal(profile.nickname,'Алиса');assert.equal(profile.history.length,2);
+    assert.ok(!JSON.stringify(profile).includes(goalCode));
     const text = JSON.stringify(publicFeed);
     for (const privateField of ['token','unlockedCode','inventoryId','boosters',goalCode]) assert.ok(!text.includes(privateField));
     assert.equal((await post('live-drops', { nickname:'Fake win' })).status,404,'clients cannot publish events');

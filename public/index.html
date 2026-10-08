@@ -9,6 +9,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23171719'/%3E%3Cpath d='M13 31 32 15 51 31V43L32 27 13 43Z' fill='%23ffdc00'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/live-feed.css">
+  <link rel="stylesheet" href="/social.css">
   <script src="/app.js" type="module"></script>
 </head>
 <body>
@@ -32,9 +33,9 @@
   <header class="site-header">
     <div class="header-inner">
       <a class="brand" href="/" aria-label="UPGRADE — главная"><svg><use href="#icon-upgrade"/></svg><span>UPGRADE<span class="brand-dot">.</span></span></a>
-      <nav class="main-nav" aria-label="Основная навигация"><span class="nav-muted">CS2</span><a class="active" href="/" aria-current="page">UPGRADE</a><span class="free-label"><i></i> БЕСПЛАТНО</span></nav>
+      <nav class="main-nav" aria-label="Основная навигация"><a class="active" id="upgradeNav" href="#upgrade" aria-current="page">UPGRADE</a><a id="battlesNav" href="#battles">БАТЛЫ<span class="nav-live-dot"></span></a></nav>
       <div class="header-account">
-        <div class="player-info"><span id="nickname">Игрок</span><strong id="balance">500 ₽</strong></div>
+        <button class="player-info profile-button" id="myProfileButton" aria-label="Мой профиль"><span id="nickname">Игрок</span><strong id="balance">500 ₽</strong></button>
         <button class="button inventory-button" id="inventoryButton"><svg class="icon"><use href="#icon-bag"/></svg><span>Инвентарь</span><span class="count" id="inventoryCount">0</span></button>
         <button class="icon-button reset-button" id="resetButton" aria-label="Повторить сессию" title="Повторить сессию"><svg class="icon"><use href="#icon-reset"/></svg><span>Повторить сессию</span></button>
       </div>
@@ -51,6 +52,7 @@
     <span class="live-feed-footer">ПОСЛЕДНИЕ 30 ПОБЕД</span>
   </aside>
   <main class="main-content">
+    <div id="upgradeView">
     <div class="game-toolbar">
       <div class="game-options">
         <button class="small-icon active" id="soundToggle" type="button" aria-label="Выключить звук" aria-pressed="true" title="Звук"><svg class="icon"><use href="#icon-sound"/></svg></button>
@@ -160,9 +162,37 @@
       </div>
     </section>
     <footer class="site-footer"><span><svg class="icon"><use href="#icon-upgrade"/></svg> UPGRADE</span><p>Бесплатная игра · Все цены и рубли — игровые</p><span class="footer-tip">Нижняя цветная зона — победа</span></footer>
+    </div>
+    <section id="battlesView" class="battles-view" hidden aria-labelledby="battlesTitle">
+      <div class="battle-heading"><div><p class="eyebrow">ОДИН БАНК. ДВА ИГРОКА.</p><h1 id="battlesTitle">Батлы апгрейдов<span> / 1 VS 1</span></h1></div><span class="battle-free">Только игровые ₽</span></div>
+      <p class="battle-intro">Улучшайте свои скины за 5 минут. У кого дороже коллекция — тот забирает весь банк. Попытки не ограничены, 777 отключён.</p>
+      <div id="battleNotice" class="battle-notice" role="status"></div>
+      <div id="battleLobby">
+        <form id="battleCreateForm" class="battle-create">
+          <div><h2>Создать батл</h2><p>Ваш взнос делится на стартовые скины.<br>Соперник получит точно такой же набор.</p></div>
+          <label>Взнос каждого, ₽<input id="battleDeposit" type="number" min="10" max="1000000" step="0.01" value="100" required></label>
+          <label>Цепочки апгрейдов<input id="battleChains" type="number" min="1" max="10" step="1" value="2" required></label>
+          <div class="battle-create-action"><span id="battleSplitPreview">2 скина по 50 ₽</span><button id="battleCreateButton" class="button primary" type="submit">Создать батл <span>↗</span></button></div>
+        </form>
+        <div class="battle-list-heading"><h2>Открытые сражения</h2><span id="battleListCount">Обновляем…</span></div>
+        <div id="battleList" class="battle-list"></div>
+      </div>
+      <div id="battleArena" hidden>
+        <div class="battle-scorebar"><div><span>ОБЩИЙ БАНК</span><strong id="battleBank">0 ₽</strong></div><div class="battle-countdown"><span id="battleClockCaption">ОСТАЛОСЬ</span><strong id="battleClock">05:00</strong></div><div><span>СТАТУС</span><strong id="battlePhase">Ожидание</strong></div></div>
+        <div id="battleResult" class="battle-result" hidden role="status"></div>
+        <div class="battle-players"><div id="battleSelf" class="battle-player-panel"></div><div id="battleOpponent" class="battle-player-panel"></div></div>
+        <div id="battleControls" class="battle-controls" hidden>
+          <div class="battle-target-picker"><p class="eyebrow">ЦЕЛЬ ДЛЯ ВЫБРАННОЙ ЦЕПОЧКИ</p><div id="battleTarget"></div><div class="battle-chances"><button type="button" data-action="battle-chance" data-key="50">50%</button><button type="button" data-action="battle-chance" data-key="66.66">66,66%</button><button type="button" data-action="battle-chance" data-key="90">90%</button></div><form id="battleChanceForm"><label for="battleChance">Свой шанс, до 90%</label><div><input id="battleChance" type="number" min="0.01" max="90" step="0.01" value="50" required><button type="submit" class="button secondary">Подобрать</button></div></form></div>
+          <div class="battle-spin-panel"><svg class="battle-wheel" viewBox="0 0 400 400" aria-label="Колесо батла: цветной сектор — победа"><circle class="wheel-ticks" cx="200" cy="200" r="190" pathLength="72"/><circle class="wheel-track" cx="200" cy="200" r="153"/><path id="battleWinArc" class="wheel-win" d="M 200 47 A 153 153 0 0 1 200 353 A 153 153 0 0 1 200 47" pathLength="100" stroke-dasharray="50 50" stroke-dashoffset="-25"/><circle class="wheel-disc" cx="200" cy="200" r="116"/><text id="battleChanceValue" class="battle-chance-value" x="200" y="209" text-anchor="middle">50%</text><text class="chance-label" x="200" y="232" text-anchor="middle">ШАНС УСПЕХА</text><g id="battlePointer" transform="rotate(180 200 200)"><path d="m200 67-8-23 8 7 8-7-8 23Z" fill="#ffe100"/><path d="M200 51V18" stroke="#ffe100" stroke-width="2"/></g></svg><button id="battleUpgradeButton" class="button primary">Прокачать</button><p id="battleSpinStatus" role="status">Выберите цепочку слева</p></div>
+          <div class="battle-stop-panel"><span class="stop-symbol">Ⅱ</span><h3>Зафиксировать результат</h3><p>Нажмите «Стоп», если готовы. Скины останутся в зачёте, но продолжить апгрейды в этом батле уже нельзя.</p><button id="battleStopButton" class="button secondary">Стоп — я закончил</button><small>Если оба закончили, победитель определится сразу.</small></div>
+        </div>
+        <div class="battle-arena-footer"><button id="battleCancelButton" class="button secondary" hidden>Отменить и вернуть взнос</button><button id="battleBackButton" class="button secondary">К списку батлов</button><span>Скины батла не переносятся в инвентарь. При ничьей взносы возвращаются.</span></div>
+      </div>
+    </section>
   </main>
   </div>
 
+  <dialog id="profileDialog" class="modal profile-modal" aria-labelledby="profileTitle"><div class="modal-header"><div><p class="eyebrow">ПРОФИЛЬ ИГРОКА</p><h2 id="profileTitle">Загрузка…</h2></div><button class="icon-button" data-close="profileDialog" aria-label="Закрыть профиль"><svg class="icon"><use href="#icon-close"/></svg></button></div><div id="profileContent"></div></dialog>
   <dialog id="welcomeDialog" class="modal welcome-modal" aria-labelledby="welcomeTitle">
     <form id="welcomeForm" class="welcome-form">
       <div class="modal-emblem"><svg><use href="#icon-upgrade"/></svg></div>

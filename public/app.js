@@ -1,4 +1,6 @@
+import { createSocial } from './social.js';
 const $ = (id) => document.getElementById(id);
+let social=null;
 const SESSION_KEY = 'upgrade.session.v1';
 const PREFS_KEY = 'upgrade.preferences.v1';
 const money = (n) => `${new Intl.NumberFormat('ru-RU').format(n)} ₽`;
@@ -37,12 +39,12 @@ function renderLiveDrops() {
     const item = drop.item;
     const rarity = Object.hasOwn(colors,item.rarity) ? item.rarity : Object.keys(colors).find((key)=>colors[key]===item.rarity) || 'gold';
     const time = new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit'}).format(new Date(drop.at));
-    return `<article class="live-drop rarity-${rarity}${newDropIds.has(drop.id)?' live-drop-new':''}${item.id==='code'?' live-drop-goal':''}">
-      <div class="live-drop-top"><strong>${money(item.price)}</strong>${drop.lucky?'<span class="live-drop-lucky">777</span>':'<span class="live-drop-win">UPGRADE</span>'}</div>
+    return `<button type="button" data-action="profile" data-key="${esc(drop.profileId||'')}" class="live-drop rarity-${rarity}${newDropIds.has(drop.id)?' live-drop-new':''}${item.id==='code'?' live-drop-goal':''}" aria-label="Профиль ${esc(drop.nickname)}" ${drop.profileId?'':'disabled'}>
+      <div class="live-drop-top"><strong>${money(item.price)}</strong>${drop.lucky?'<span class="live-drop-lucky">777</span>':`<span class="live-drop-win">${drop.mode==='battle'?'БАТЛ':'UPGRADE'}</span>`}</div>
       <img src="${esc(item.image)}" alt="${esc(item.weapon)} | ${esc(item.name)}" width="140" height="76" loading="lazy" decoding="async">
       <span class="live-drop-weapon">${esc(item.weapon)}</span><strong class="live-drop-name" title="${esc(item.name)}">${esc(item.name)}</strong>
       <div class="live-drop-player"><span title="${esc(drop.nickname)}">${esc(drop.nickname)}</span><time datetime="${new Date(drop.at).toISOString()}">${time}</time></div>
-    </article>`;
+    </button>`;
   }).join('') : '<div class="live-feed-empty"><svg class="icon"><use href="#icon-upgrade"/></svg><strong>Кто сорвёт первый дроп?</strong><span>Здесь появятся выигрыши игроков</span></div>';
   newDropIds.clear();
 }
@@ -109,6 +111,7 @@ function toast(message) {
   toastTimer = setTimeout(() => $('toast').classList.remove('visible'), 4500);
 }
 function saveSnapshot(data, render = true) {
+  if(player?.id===data.player?.id && player?.revision>data.player?.revision)return;
   token = data.token; player = data.player;
   try { localStorage.setItem(SESSION_KEY, token); }
   catch { toast('Браузер не разрешает сохранение. Разрешите данные сайта, чтобы не потерять прогресс.'); }
@@ -261,6 +264,7 @@ function renderMultiplierButtons() {
   $('findChanceButton').disabled=busy;
 }
 function renderPlayer() {
+  social?.start();
   $('nickname').textContent = player?.nickname || 'Новая сессия';
   $('balance').textContent = money(player?.balance || 0);
   $('inventoryCount').textContent = player?.inventory.length || 0;
@@ -649,6 +653,9 @@ window.addEventListener('storage',async(event)=>{
   token=event.newValue;
   try{saveSnapshot(await api('resume',{token}));if(mode==='shop')loadShop();}catch(error){toast(error.message);}
 });
+social=createSocial({$,document,window,getPlayer:()=>player,getToken:()=>token,isBusy:()=>busy,
+  setBusy:(value)=>{busy=value;liveFeedPaused=value;renderPlayer();if(!value){renderLiveDrops();flushOtherTab();}},
+  saveSnapshot,api,toast,showDialog,esc,money,primeAudio,spinTick,sound,initialView:location.hash});
 async function init() {
   connectLiveDrops();
   $('targetSort').value='desc';
@@ -663,5 +670,6 @@ async function init() {
   if(!player) showDialog('welcomeDialog');
   $('shopMax').value='';
   renderPlayer();switchMode(mode);await loadTargets();
+  social.init();
 }
 init();

@@ -38,7 +38,8 @@ function readFixtureToken(token) {
 test('new player receives 500 and validation is enforced', () => {
   const engine = game();
   const session = engine.start('  Игрок  ');
-  assert.deepEqual(session.player, { nickname: 'Игрок', balance: 500, inventory: [], wins: 0, attempts: 0, boosters: initialBoosters });
+  assert.match(session.player.id,/^[0-9a-f-]{36}$/);
+  assert.deepEqual(session.player, { id:session.player.id,revision:0,nickname: 'Игрок', balance: 500, inventory: [], wins: 0, attempts: 0, boosters: initialBoosters });
   assert.throws(() => engine.start('<script>'), isError('INVALID_NICKNAME'));
   assert.throws(() => engine.start('a'), isError('INVALID_NICKNAME'));
   assert.throws(() => engine.start('a\nB'), isError('INVALID_NICKNAME'));
