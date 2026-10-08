@@ -17,7 +17,7 @@ const artwork = [{ name: 'Test skin', weapon: 'AWP', image: '/assets/test.png', 
 const settled = () => new Promise((resolve) => setImmediate(resolve));
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 
-function harness({ random = () => 0.5, engine, savedToken, preferences, intercept, reducedMotion=false } = {}) {
+function harness({ random = () => 0.5, engine, savedToken, preferences, intercept, reducedMotion=false, animationRandom=()=>.5 } = {}) {
   engine ||= createGame({ secret: TEST_SECRET, goalCode: '1234567890', artworks: artwork, random });
   const elements = new Map(), documentListeners = new Map(), windowListeners = new Map();
   const storage = new Map(), frames = new Map(), timers = new Map();
@@ -91,6 +91,7 @@ function harness({ random = () => 0.5, engine, savedToken, preferences, intercep
   }
   const context = vm.createContext({
     document, window, fetch: fetchDouble, URLSearchParams, Intl, console,
+    Math:Object.assign(Object.create(Math),{random:animationRandom}),
     localStorage: { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value)), removeItem: (key) => storage.delete(key) },
     location: { reload() { reloads++; } }, navigator: { clipboard: { writeText: async () => {} } },
     performance: { now: () => clock }, requestAnimationFrame(callback) { const id = nextFrame++; frames.set(id, callback); return id; },
@@ -480,18 +481,20 @@ test('reduced motion and no-animation mode apply instantly and invalid saved mod
   assert.equal(h.evaluate('prefs.zoneAnimation'),'smooth');
 });
 
-test('normal pointer spin starts gently, decelerates for five seconds and lands without a jump',async()=>{
+test('normal pointer spin starts gently, retains a long braking phase and lands without a jump',async()=>{
   const h=harness();h.evaluate('prefs.sound=false');
   const start=h.evaluate('rotation');const spin=h.evaluate('animatePointer(267.25)');
   const samples=[start];
-  for(let i=0;i<64;i++){h.frame(100);samples.push(h.evaluate('rotation'));}
+  for(let i=0;h.pendingFrames && i<90;i++){h.frame(100);samples.push(h.evaluate('rotation'));}
+  assert.equal(h.pendingFrames,0);
   await spin;
   const steps=samples.slice(1).map((value,i)=>value-samples[i]);
   assert.ok(steps.every((step)=>step>=0),'pointer never reverses');
   assert.ok(steps[0]<steps[3]/5,'gentle takeoff instead of an immediate maximum speed');
-  for(let i=15;i<steps.length;i++)assert.ok(steps[i]<=steps[i-1]+1e-9,'speed decreases throughout the long braking phase');
-  assert.ok(samples[64]-samples[36]>200,'substantial visible movement remains after the old 3.6-second stop');
-  assert.ok(samples[64]-samples[54]>10,'the last second still has a visible slow approach');
+  assert.ok(steps.length>=62 && steps.length<=82);
+  for(let i=Math.ceil(steps.length*.28)+1;i<steps.length;i++)assert.ok(steps[i]<=steps[i-1]+1e-8,'speed decreases throughout the long braking phase');
+  assert.ok(samples.at(-1)-samples[36]>200,'substantial visible movement remains after the old 3.6-second stop');
+  assert.ok(samples.at(-1)-samples.at(-11)>5,'the last second still has a visible slow approach');
   assert.ok(steps.at(-1)<.2,'last frame reaches the result without a visible snap');
   assert.equal(((h.evaluate('rotation')%360)+360)%360,267.25);
   assert.equal(h.pendingFrames,0);
@@ -502,8 +505,8 @@ test('pointer landing is identical across frame rates, dropped frames, both spee
     const h=harness({preferences:{fast,sound:false}});
     for(const angle of [0,359.999,126.75]) {
       const spin=h.evaluate(`animatePointer(${angle})`);
-      let frames=0;while(h.pendingFrames && frames++<1100)h.frame(step);
-      await spin;assert.equal(h.pendingFrames,0);
+      let frames=0;while(h.pendingFrames && frames++<1300)h.frame(step);
+      assert.equal(h.pendingFrames,0);await spin;
       const landed=((h.evaluate('rotation')%360)+360)%360;
       assert.ok(Math.abs(landed-angle)<1e-8,`${fast?'fast':'normal'} ${step}ms frames: ${landed}`);
     }
@@ -515,9 +518,60 @@ test('fast pointer mode retains an extended slowing finish and reduced motion sk
   const spin=h.evaluate('animatePointer(90)');h.frame(550);
   assert.equal(h.pendingFrames,1,'fast spin no longer ends at 550ms');
   h.frame(1050);const approaching=h.evaluate('rotation');
-  assert.equal(h.pendingFrames,1);h.frame(400);await spin;
+  assert.equal(h.pendingFrames,1);h.frame(1000);await spin;
   assert.ok(h.evaluate('rotation')>approaching);assert.equal(h.evaluate('rotation')%360,90);
   const reduced=harness({reducedMotion:true});
   const instant=reduced.evaluate('animatePointer(45)');reduced.frame(16);await instant;
   assert.equal(reduced.evaluate('rotation')%360,45);assert.equal(reduced.pendingFrames,0);assert.equal(reduced.audio.length,0);
+});
+
+test('cosmetic randomness varies consecutive spins even for the same result and never resamples on animation frames',async()=>{
+  let draws=0;const h=harness({preferences:{sound:false},animationRandom:()=>{draws++;return .5;}});
+  const fingerprints=[];
+  for(let i=0;i<4;i++) {
+    h.evaluate('rotation=180');
+    const spin=h.evaluate('animatePointer(180)');const drawsAtStart=draws;
+    const positions=[];
+    for(let frame=0;h.pendingFrames && frame<90;frame++){h.frame(100);positions.push(h.evaluate('rotation'));}
+    await spin;fingerprints.push(JSON.stringify(positions));
+    assert.equal(draws,drawsAtStart,'no random jitter or curve changes while spinning');
+    assert.equal(h.evaluate('rotation')%360,180);
+  }
+  for(let i=1;i<fingerprints.length;i++)assert.notEqual(fingerprints[i],fingerprints[i-1]);
+});
+
+test('all random motion boundaries are smooth and bounded, and random duration and turns never change the landing',async()=>{
+  for(const fast of [false,true])for(const draw of [0,.5,.999999]) {
+    const h=harness({preferences:{fast,sound:false},animationRandom:()=>draw});
+    for(let variant=0;variant<3;variant++) {
+      const motion=h.plain(`randomSpinMotion(${fast})`);
+      assert.ok(motion.duration>=(fast?1800:6200) && motion.duration<=(fast?2600:8200));
+      assert.ok(motion.turns>=(fast?2:4) && motion.turns<=(fast?3:6));
+      assert.ok((1-motion.accelerate-motion.cruise)*motion.duration>=(fast?1300:4500),'long braking remains');
+      h.context.motionFixture=motion;
+      let previous=0;
+      for(let sample=0;sample<=500;sample++) {
+        const progress=h.evaluate(`pointerProgress(${sample/500},motionFixture)`);
+        assert.ok(progress>=previous-1e-12 && progress<=1,'no bounce, reversal or overshoot');previous=progress;
+      }
+      for(const boundary of [motion.accelerate,motion.accelerate+motion.cruise]) {
+        const delta=.00001;
+        const left=h.evaluate(`(pointerProgress(${boundary},motionFixture)-pointerProgress(${boundary-delta},motionFixture))/${delta}`);
+        const right=h.evaluate(`(pointerProgress(${boundary+delta},motionFixture)-pointerProgress(${boundary},motionFixture))/${delta}`);
+        assert.ok(Math.abs(left-right)<1e-5,'velocity remains continuous at phase boundaries');
+      }
+      const spin=h.evaluate('animatePointer(71.125)');await h.finishAnimation();await spin;
+      assert.ok(Math.abs(h.evaluate('rotation')%360-71.125)<1e-8);
+    }
+  }
+});
+
+test('motion randomness leaves upgrade outcome and probability unchanged for identical server draws',async()=>{
+  for(const draw of [0,.5,.999999]) {
+    const h=harness({random:()=>.5,animationRandom:()=>draw,preferences:{sound:false}});
+    h.seed(100,200);const spin=h.evaluate('upgrade()');await h.finishAnimation();await spin;
+    assert.equal(h.evaluate('player.inventory[0].price'),200);
+    assert.equal(h.evaluate('player.wins'),1);assert.equal(h.evaluate('rotation')%360,180);
+    assert.equal(h.evaluate('winSector.value'),50);
+  }
 });

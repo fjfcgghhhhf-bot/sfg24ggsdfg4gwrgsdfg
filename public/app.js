@@ -379,31 +379,53 @@ async function pickMultiplier(multiplier,notify=true) {
   } catch(error) { if(seq===selectionSequence){activeMultiplier=null;toast(error.message);} }
   finally {if(seq===selectionSequence){targetLoading=false;renderSelection();}}
 }
-function pointerProgress(t) {
-  // Integrate a continuous speed curve: gentle acceleration, a short cruise,
-  // then braking over 78% of the spin. Speed and acceleration meet smoothly
-  // at both joins and reach zero at the final angle without a bounce.
-  const accelerate=.1,cruise=.12,brake=1-accelerate-cruise;
-  const total=accelerate/2+cruise+brake/2;
+const SPIN_STYLES = [
+  {accelerate:[.08,.12],cruise:[.08,.14],bend:[.9,1.1]},
+  {accelerate:[.09,.13],cruise:[.03,.07],bend:[.75,.9]},
+  {accelerate:[.06,.1],cruise:[.1,.16],bend:[1.15,1.4]},
+];
+let previousSpinStyle=-1;
+function randomSpinMotion(fast) {
+  // Cosmetic randomness is sampled once, separately from the server result.
+  // Excluding the preceding style keeps consecutive spins visibly different.
+  const choices=SPIN_STYLES.map((_,index)=>index).filter((index)=>index!==previousSpinStyle);
+  const styleIndex=choices[Math.floor(Math.random()*choices.length)];
+  previousSpinStyle=styleIndex;
+  const style=SPIN_STYLES[styleIndex];
+  const between=([min,max])=>min+(max-min)*Math.random();
+  return {
+    duration:Math.round(between(fast?[1800,2600]:[6200,8200])),
+    turns:fast ? 2+Math.floor(Math.random()*2):4+Math.floor(Math.random()*3),
+    accelerate:between(style.accelerate),cruise:between(style.cruise),bend:between(style.bend),
+  };
+}
+function pointerProgress(t,motion) {
+  // Integrate the speed rather than adding frame-by-frame jitter. The varied
+  // braking curve remains monotonic, with continuous speed and acceleration.
+  const {accelerate,cruise,bend}=motion,brake=1-accelerate-cruise;
+  const brakingIntegral=(u)=>u-3*u**(2*bend+1)/(2*bend+1)+2*u**(3*bend+1)/(3*bend+1);
+  const total=accelerate/2+cruise+brake*brakingIntegral(1);
   if(t<=0)return 0;
   if(t>=1)return 1;
   if(t<accelerate){const u=t/accelerate;return accelerate*(u**3-u**4/2)/total;}
   if(t<accelerate+cruise)return (accelerate/2+t-accelerate)/total;
   const u=(t-accelerate-cruise)/brake;
-  return (accelerate/2+cruise+brake*(u-u**3+u**4/2))/total;
+  return (accelerate/2+cruise+brake*brakingIntegral(u))/total;
 }
 async function animatePointer(angle) {
   const fast=prefs.fast;
-  const duration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0:fast ? 2000:6400;
+  const reduced=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const motion=reduced ? {duration:0,turns:0}:randomSpinMotion(fast);
+  const duration=motion.duration;
   const start = rotation;
   const normalized = ((rotation%360)+360)%360;
-  const end = rotation + (fast ? 720:1800) + ((angle-normalized+360)%360);
+  const end = rotation + motion.turns*360 + ((angle-normalized+360)%360);
   await new Promise((resolve)=>{
     const begins = performance.now();
     let lastTick = -1000, lastSector=Math.floor(start/24);
     function frame(now) {
       const t = duration ? Math.min(1,Math.max(0,(now-begins)/duration)):1;
-      rotation = t===1 ? end:start+(end-start)*pointerProgress(t);
+      rotation = t===1 ? end:start+(end-start)*pointerProgress(t,motion);
       $('pointer').setAttribute('transform',`rotate(${rotation} 200 200)`);
       const sector=Math.floor(rotation/24);
       if(duration && t<1 && sector!==lastSector && now-lastTick>=35){spinTick();lastTick=now;lastSector=sector;}
