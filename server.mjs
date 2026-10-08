@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createGame, GameError } from './lib/game.mjs';
 import { loadConfiguration } from './lib/config.mjs';
+import { createLiveDrops } from './lib/live-drops.mjs';
 
 const DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.woff': 'font/woff', '.mp3': 'audio/mpeg', '.wav': 'audio/wav' };
@@ -38,6 +39,7 @@ async function readJSON(request) {
 export function createApplication({ game, publicDir = path.join(DIRECTORY, 'public'), trustProxy = false }) {
   publicDir = path.resolve(publicDir);
   const rates = new Map();
+  const liveDrops = createLiveDrops();
   let lastSweep = 0;
   const server = http.createServer(async (request, response) => {
     response.setHeader('X-Content-Type-Options', 'nosniff');
@@ -64,6 +66,8 @@ export function createApplication({ game, publicDir = path.join(DIRECTORY, 'publ
         }
         if (request.method === 'GET' && url.pathname === '/api/catalog') return sendJSON(response, 200, game.catalog.list(Object.fromEntries(url.searchParams)));
         if (request.method === 'GET' && url.pathname === '/api/item') return sendJSON(response, 200, game.catalog.get(url.searchParams.get('id')));
+        if (request.method === 'GET' && url.pathname === '/api/live-drops') return sendJSON(response, 200, { drops: liveDrops.list() });
+        if (request.method === 'GET' && url.pathname === '/api/live-drops/stream') return liveDrops.connect(response);
         if (request.method !== 'POST') throw new GameError('Метод не поддерживается.', 'METHOD_NOT_ALLOWED', 405);
         const body = await readJSON(request);
         const handlers = {
@@ -77,7 +81,9 @@ export function createApplication({ game, publicDir = path.join(DIRECTORY, 'publ
           '/api/reset': () => game.reset(body.token),
         };
         if (!Object.hasOwn(handlers, url.pathname)) throw new GameError('Маршрут не найден.', 'NOT_FOUND', 404);
-        return sendJSON(response, 200, handlers[url.pathname]());
+        const payload = handlers[url.pathname]();
+        if (url.pathname === '/api/upgrade') liveDrops.publish(payload);
+        return sendJSON(response, 200, payload);
       }
       if (request.method !== 'GET' && request.method !== 'HEAD') throw new GameError('Метод не поддерживается.', 'METHOD_NOT_ALLOWED', 405);
       let pathname;
@@ -105,6 +111,7 @@ export function createApplication({ game, publicDir = path.join(DIRECTORY, 'publ
   });
   server.requestTimeout = 15_000;
   server.headersTimeout = 10_000;
+  server.on('close', () => liveDrops.close());
   return server;
 }
 

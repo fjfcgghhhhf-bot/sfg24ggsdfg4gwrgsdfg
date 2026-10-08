@@ -21,7 +21,13 @@ function harness({ random = () => 0.5, engine, savedToken, preferences, intercep
   engine ||= createGame({ secret: TEST_SECRET, goalCode: '1234567890', artworks: artwork, random });
   const elements = new Map(), documentListeners = new Map(), windowListeners = new Map();
   const storage = new Map(), frames = new Map(), timers = new Map();
-  const requests = [], dialogs = [], audio = [], trace = [];
+  const requests = [], dialogs = [], audio = [], trace = [], streams = [];
+  class EventSource {
+    constructor(url) { this.url=url;this.listeners=new Map();streams.push(this); }
+    addEventListener(name,callback) { this.listeners.set(name,callback); }
+    emit(name,data) { this.listeners.get(name)?.({data:JSON.stringify(data)}); }
+    close() { this.closed=true; }
+  }
   let clock = 0, nextFrame = 1, nextTimer = 1, reloads = 0;
   if (savedToken) storage.set(SESSION_KEY, savedToken);
   if (preferences) storage.set(PREFS_KEY, JSON.stringify(preferences));
@@ -90,7 +96,7 @@ function harness({ random = () => 0.5, engine, savedToken, preferences, intercep
     }
   }
   const context = vm.createContext({
-    document, window, fetch: fetchDouble, URLSearchParams, Intl, console,
+    document, window, fetch: fetchDouble, URLSearchParams, Intl, console, EventSource,
     Math:Object.assign(Object.create(Math),{random:animationRandom}),
     localStorage: { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value)), removeItem: (key) => storage.delete(key) },
     location: { reload() { reloads++; } }, navigator: { clipboard: { writeText: async () => {} } },
@@ -136,8 +142,66 @@ function harness({ random = () => 0.5, engine, savedToken, preferences, intercep
     assert.equal(frames.size, 0, 'animation eventually completes');
     await settled();
   }
-  return { engine, context, evaluate, plain, seed, install, dispatch, clickDataset, finishAnimation, frame, requests, storage, dialogs, audio, trace, presets, element: (id) => elements.get(id), get pendingFrames() { return frames.size; }, get reloads() { return reloads; }, async storageEvent(value) { for (const listener of windowListeners.get('storage') || []) await listener({ key: SESSION_KEY, newValue: value }); } };
+  return { engine, context, evaluate, plain, seed, install, dispatch, clickDataset, finishAnimation, frame, requests, storage, dialogs, audio, trace, presets, streams, windowEvent(name) { for(const listener of windowListeners.get(name)||[])listener(); }, element: (id) => elements.get(id), get pendingFrames() { return frames.size; }, get reloads() { return reloads; }, async storageEvent(value) { for (const listener of windowListeners.get('storage') || []) await listener({ key: SESSION_KEY, newValue: value }); } };
 }
+
+function feedDrop(id='drop-1') {
+  return {id,nickname:'Другой игрок',at:1700000000000,lucky:true,item:{id:'skin-200',name:'Redline',weapon:'AK-47',price:200,image:'/assets/skins/redline.png',rarity:'red'}};
+}
+
+test('live feed escapes names, deduplicates snapshots and limits history to 30 actual events',()=>{
+  const h=harness();h.evaluate('connectLiveDrops()');
+  const stream=h.streams[0],drop=feedDrop();
+  stream.emit('snapshot',[]);
+  assert.match(h.element('liveFeedList').innerHTML,/Кто сорвёт первый дроп/);
+  drop.nickname='"<img onerror=alert(1)>"';drop.item.name='<script>bad()</script>';
+  stream.emit('drop',drop);
+  const markup=h.element('liveFeedList').innerHTML;
+  assert.match(markup,/&lt;img onerror=alert\(1\)&gt;/);
+  assert.ok(!markup.includes('<script>'));
+  assert.match(markup,/live-drop-new/);
+  stream.emit('drop',drop);
+  assert.equal(h.plain('liveDrops').length,1);
+  assert.ok(!h.element('liveFeedList').innerHTML.includes('live-drop-new'));
+  for(let i=2;i<=40;i++)stream.emit('drop',feedDrop(`drop-${i}`));
+  assert.equal(h.plain('liveDrops').length,30);
+  assert.equal(h.plain('liveDrops')[0].id,'drop-40');
+  stream.emit('snapshot',[feedDrop('drop-41'),...h.plain('liveDrops')]);
+  assert.equal(h.plain('liveDrops')[0].id,'drop-41');
+  assert.equal(h.plain('liveDrops').length,30);
+  stream.emit('drop',{id:'bad'});
+  stream.listeners.get('drop')({data:'not JSON'});
+  assert.equal(h.plain('liveDrops').length,30);
+});
+
+test('live drops wait until the pointer stops before revealing any new wins',async()=>{
+  const h=harness();h.seed();h.evaluate('connectLiveDrops()');
+  const stream=h.streams[0];stream.emit('snapshot',[]);
+  const before=h.element('liveFeedList').innerHTML;
+  const spin=h.evaluate('upgrade()');await settled();
+  assert.equal(h.evaluate('liveFeedPaused'),true);
+  stream.emit('drop',feedDrop());
+  assert.equal(h.element('liveFeedList').innerHTML,before);
+  await h.finishAnimation();await spin;
+  assert.equal(h.evaluate('liveFeedPaused'),false);
+  assert.match(h.element('liveFeedList').innerHTML,/Другой игрок/);
+});
+
+test('live feed preserves history on connection errors and releases its connection when leaving',()=>{
+  const h=harness();h.evaluate('connectLiveDrops();connectLiveDrops()');
+  assert.equal(h.streams.length,1);
+  const stream=h.streams[0];stream.emit('open');stream.emit('snapshot',[feedDrop()]);
+  assert.equal(h.element('liveFeedDot').classList.contains('connected'),true);
+  const before=h.element('liveFeedList').innerHTML;
+  stream.emit('error');
+  assert.equal(h.element('liveFeedList').innerHTML,before);
+  assert.equal(h.element('liveFeedStatus').textContent,'Переподключаемся…');
+  assert.equal(h.element('liveFeedDot').classList.contains('connected'),false);
+  h.windowEvent('pagehide');assert.equal(stream.closed,true);
+  h.windowEvent('pageshow');assert.equal(h.streams.length,2);
+  h.streams[1].emit('snapshot',[feedDrop('missed'),feedDrop()]);
+  assert.equal(h.plain('liveDrops').length,2);
+});
 
 test('frontend multiplier preserves 1.5x prices, rounds in cents, and caps at the goal', () => {
   const h = harness();

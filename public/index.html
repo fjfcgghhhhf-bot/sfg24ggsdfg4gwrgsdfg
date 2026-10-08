@@ -8,6 +8,7 @@
   <title>UPGRADE — путь к секретному коду</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23171719'/%3E%3Cpath d='M13 31 32 15 51 31V43L32 27 13 43Z' fill='%23ffdc00'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/live-feed.css">
   <script src="/app.js" type="module"></script>
 </head>
 <body>
@@ -40,6 +41,15 @@
     </div>
   </header>
 
+  <div class="site-layout">
+  <aside class="live-feed" aria-labelledby="liveFeedTitle">
+    <div class="live-feed-heading"><span class="live-dot" id="liveFeedDot"></span><h2 id="liveFeedTitle">LIVE ДРОПЫ</h2><span class="live-feed-badge">CS2</span></div>
+    <p class="live-feed-status" id="liveFeedStatus" role="status">Подключаемся…</p>
+    <div id="liveFeedList" class="live-feed-list" aria-label="Последние выигрыши игроков" tabindex="0">
+      <div class="live-feed-empty"><svg class="icon"><use href="#icon-upgrade"/></svg><strong>Кто сорвёт первый дроп?</strong><span>Здесь появятся выигрыши игроков</span></div>
+    </div>
+    <span class="live-feed-footer">ПОСЛЕДНИЕ 30 ПОБЕД</span>
+  </aside>
   <main class="main-content">
     <div class="game-toolbar">
       <div class="game-options">
@@ -151,6 +161,7 @@
     </section>
     <footer class="site-footer"><span><svg class="icon"><use href="#icon-upgrade"/></svg> UPGRADE</span><p>Бесплатная игра · Все цены и рубли — игровые</p><span class="footer-tip">Нижняя цветная зона — победа</span></footer>
   </main>
+  </div>
 
   <dialog id="welcomeDialog" class="modal welcome-modal" aria-labelledby="welcomeTitle">
     <form id="welcomeForm" class="welcome-form">

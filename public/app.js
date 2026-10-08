@@ -21,6 +21,53 @@ let pendingStorageValue;
 const cache = new Map([['code',goal]]);
 const cart = new Map();
 let shopItems = [];
+let liveStream = null, liveDrops = [], liveFeedPaused = false, liveFeedReady = false;
+const newDropIds = new Set();
+function renderLiveDrops() {
+  if (liveFeedPaused) return;
+  $('liveFeedList').innerHTML = liveDrops.length ? liveDrops.map((drop) => {
+    const item = drop.item;
+    const rarity = Object.hasOwn(colors,item.rarity) ? item.rarity : Object.keys(colors).find((key)=>colors[key]===item.rarity) || 'gold';
+    const time = new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit'}).format(new Date(drop.at));
+    return `<article class="live-drop rarity-${rarity}${newDropIds.has(drop.id)?' live-drop-new':''}${item.id==='code'?' live-drop-goal':''}">
+      <div class="live-drop-top"><strong>${money(item.price)}</strong>${drop.lucky?'<span class="live-drop-lucky">777</span>':'<span class="live-drop-win">UPGRADE</span>'}</div>
+      <img src="${esc(item.image)}" alt="${esc(item.weapon)} | ${esc(item.name)}" width="140" height="76" loading="lazy" decoding="async">
+      <span class="live-drop-weapon">${esc(item.weapon)}</span><strong class="live-drop-name" title="${esc(item.name)}">${esc(item.name)}</strong>
+      <div class="live-drop-player"><span title="${esc(drop.nickname)}">${esc(drop.nickname)}</span><time datetime="${new Date(drop.at).toISOString()}">${time}</time></div>
+    </article>`;
+  }).join('') : '<div class="live-feed-empty"><svg class="icon"><use href="#icon-upgrade"/></svg><strong>Кто сорвёт первый дроп?</strong><span>Здесь появятся выигрыши игроков</span></div>';
+  newDropIds.clear();
+}
+function receiveLiveDrops(event, snapshot = false) {
+  try {
+    const data = JSON.parse(event.data), incoming = snapshot ? data : [data];
+    if (!Array.isArray(incoming)) return;
+    const valid = incoming.filter((drop)=>drop && typeof drop.id==='string' && typeof drop.nickname==='string' && Number.isFinite(drop.at) && Math.abs(drop.at)<8.64e15 && drop.item && typeof drop.item.name==='string' && typeof drop.item.weapon==='string' && typeof drop.item.image==='string' && drop.item.image.startsWith('/assets/') && Number.isFinite(drop.item.price));
+    const known = new Set(liveDrops.map((drop)=>drop.id));
+    if (!snapshot || liveFeedReady) for (const drop of valid) if (!known.has(drop.id)) newDropIds.add(drop.id);
+    const unique = new Map((snapshot ? valid : [...valid,...liveDrops]).map((drop)=>[drop.id,drop]));
+    liveDrops = [...unique.values()].slice(0,30);
+    for (const id of newDropIds) if (!liveDrops.some((drop)=>drop.id===id)) newDropIds.delete(id);
+    liveFeedReady = true;
+    renderLiveDrops();
+  } catch { /* A malformed event must not interrupt the game or reconnects. */ }
+}
+function connectLiveDrops() {
+  if (liveStream || typeof EventSource==='undefined') return;
+  liveStream = new EventSource('/api/live-drops/stream');
+  liveStream.addEventListener('open',()=>{
+    $('liveFeedDot').classList.add('connected');
+    $('liveFeedStatus').textContent='Выигрыши всех игроков';
+  });
+  liveStream.addEventListener('snapshot',(event)=>receiveLiveDrops(event,true));
+  liveStream.addEventListener('drop',(event)=>receiveLiveDrops(event));
+  liveStream.addEventListener('error',()=>{
+    $('liveFeedDot').classList.remove('connected');
+    $('liveFeedStatus').textContent='Переподключаемся…';
+  });
+}
+window.addEventListener('pagehide',()=>{liveStream?.close();liveStream=null;});
+window.addEventListener('pageshow',()=>connectLiveDrops());
 try { token = localStorage.getItem(SESSION_KEY); prefs = {...prefs,...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')}; } catch { /* Storage warning shown when saving. */ }
 if (!Array.isArray(prefs.multipliers) || prefs.multipliers.length!==4 || prefs.multipliers.some((x)=>!Number.isFinite(x)||x<1.01||x>50000)) prefs.multipliers=[...DEFAULT_MULTIPLIERS];
 if (!Object.hasOwn(ZONE_ANIMATIONS,prefs.zoneAnimation)) prefs.zoneAnimation='smooth';
@@ -439,6 +486,7 @@ async function upgrade() {
   if(luckyArmed && source.price/target.price<.5){toast('777 доступен только при обычном шансе от 50%.');return;}
   selectionSequence++;
   primeAudio();
+  liveFeedPaused=true;
   busy=true; renderPlayer(); setStatus('Круг вращается…');
   const previousSource = source;
   let finalStatus = '',finalKind='';
@@ -458,7 +506,7 @@ async function upgrade() {
     toast(error.message);
     // Recover an already committed response if the connection dropped after mutation.
     try { saveSnapshot(await api('resume',{token})); } catch { /* Leave stored token for next attempt. */ }
-  } finally { busy=false; renderPlayer(); if(finalStatus)setStatus(finalStatus,finalKind); loadTargets(); flushOtherTab(); }
+  } finally { liveFeedPaused=false; renderLiveDrops(); busy=false; renderPlayer(); if(finalStatus)setStatus(finalStatus,finalKind); loadTargets(); flushOtherTab(); }
 }
 function debounce(fn) { let timer; return () => {clearTimeout(timer);timer=setTimeout(fn,220);}; }
 document.addEventListener('click',async(event)=>{
@@ -585,6 +633,7 @@ window.addEventListener('storage',async(event)=>{
   try{saveSnapshot(await api('resume',{token}));if(mode==='shop')loadShop();}catch(error){toast(error.message);}
 });
 async function init() {
+  connectLiveDrops();
   $('targetSort').value='desc';
   renderPreferences();
   if(token) {
