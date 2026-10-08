@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createCipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createCatalog, createGame, GameError } from '../lib/game.mjs';
 import { loadConfiguration } from '../lib/config.mjs';
 import { createApplication } from '../server.mjs';
@@ -17,7 +17,7 @@ const artworks = [
 ];
 const game = (options = {}) => createGame({ secret, goalCode, artworks, ...options });
 const isError = (code) => (error) => error instanceof GameError && error.code === code;
-const initialBoosters = { phoenixRemaining: 10, luckyRemaining: 3 };
+const initialBoosters = { luckyRemaining: 3 };
 
 function fixtureToken(state) {
   const iv = randomBytes(12);
@@ -25,6 +25,14 @@ function fixtureToken(state) {
   cipher.setAAD(Buffer.from('upgrade-session-v1'));
   const ciphertext = Buffer.concat([cipher.update(JSON.stringify(state), 'utf8'), cipher.final()]);
   return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString('base64url');
+}
+
+function readFixtureToken(token) {
+  const raw = Buffer.from(token, 'base64url');
+  const decipher = createDecipheriv('aes-256-gcm', createHash('sha256').update(secret).digest(), raw.subarray(0, 12));
+  decipher.setAAD(Buffer.from('upgrade-session-v1'));
+  decipher.setAuthTag(raw.subarray(12, 28));
+  return JSON.parse(Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]).toString('utf8'));
 }
 
 test('new player receives 500 and validation is enforced', () => {
@@ -99,61 +107,23 @@ test('one-and-a-half upgrades retain the actual 66.67 percent chance without 10-
   assert.equal(session.player.balance, 512.5);
 });
 
-test('Phoenix saves the same source on ten losses, rejects the eleventh armed roll atomically', () => {
-  const engine = game({ random: () => 0 });
-  let session = engine.start('Феникс');
-  session = engine.buy(session.token, 'skin-10');
-  const source = session.player.inventory[0];
-  for (let count = 1; count <= 10; count++) {
-    session = engine.upgrade(session.token, source.inventoryId, 'skin-20', { phoenix: true });
-    assert.equal(session.result.won, false);
-    assert.equal(session.result.savedByPhoenix, true);
-    assert.equal(session.result.luckyUsed, false);
-    assert.deepEqual(session.player.inventory, [source]);
-    assert.equal(session.player.boosters.phoenixRemaining, 10 - count);
-    assert.equal(session.player.attempts, count);
-    assert.equal(session.player.wins, 0);
-    assert.equal(session.player.balance, 490);
-  }
-  assert.throws(() => engine.upgrade(session.token, source.inventoryId, 'skin-20', { phoenix: true }), isError('PHOENIX_EXHAUSTED'));
-  assert.deepEqual(engine.resume(session.token), { token: session.token, player: session.player });
-  assert.deepEqual(game().resume(session.token).player.boosters, { phoenixRemaining: 0, luckyRemaining: 3 });
-  session = engine.upgrade(session.token, source.inventoryId, 'skin-20');
-  assert.equal(session.result.savedByPhoenix, false);
-  assert.equal(session.player.inventory.length, 0);
-  engine.reset(session.token);
-  assert.deepEqual(engine.start('Заново').player.boosters, initialBoosters);
-});
-
-test('Phoenix is not charged on a normal victory', () => {
-  const engine = game({ random: () => 0.5 });
-  let session = engine.start('Феникс');
-  session = engine.buy(session.token, 'skin-10');
-  const source = session.player.inventory[0].inventoryId;
-  session = engine.upgrade(session.token, source, 'skin-20', { phoenix: true });
-  assert.equal(session.result.won, true);
-  assert.equal(session.result.savedByPhoenix, false);
-  assert.equal(session.player.boosters.phoenixRemaining, 10);
-  assert.notEqual(session.player.inventory[0].inventoryId, source);
-});
-
 test('Lucky guarantees three valid wins and rejects the fourth without spending', () => {
   const engine = game({ random: () => 0 });
   let session = engine.start('Счастливчик');
   session = engine.buy(session.token, 'skin-10');
   for (const [count, price] of [20, 40, 80].entries()) {
-    session = engine.upgrade(session.token, session.player.inventory[0].inventoryId, `skin-${price}`, { lucky: true, phoenix: true });
+    session = engine.upgrade(session.token, session.player.inventory[0].inventoryId, `skin-${price}`, { lucky: true });
     assert.equal(session.result.won, true);
     assert.equal(session.result.chance, 50);
     assert.equal(session.result.angle, 90);
     assert.equal(session.result.luckyUsed, true);
-    assert.equal(session.result.savedByPhoenix, false);
     assert.equal(session.player.boosters.luckyRemaining, 2 - count);
-    assert.equal(session.player.boosters.phoenixRemaining, 10);
   }
   assert.throws(() => engine.upgrade(session.token, session.player.inventory[0].inventoryId, 'skin-160', { lucky: true }), isError('LUCKY_EXHAUSTED'));
   assert.deepEqual(engine.resume(session.token), { token: session.token, player: session.player });
-  assert.deepEqual(game().resume(session.token).player.boosters, { phoenixRemaining: 10, luckyRemaining: 0 });
+  assert.deepEqual(game().resume(session.token).player.boosters, { luckyRemaining: 0 });
+  engine.reset(session.token);
+  assert.deepEqual(engine.start('Заново').player.boosters, initialBoosters);
 });
 
 test('Lucky charges even a naturally winning draw and uniformly maps draws into the normal arc', () => {
@@ -176,8 +146,8 @@ test('Lucky below 50 percent and non-boolean booster flags are rejected before a
   let session = engine.start('Проверка');
   session = engine.buy(session.token, 'skin-10');
   const source = session.player.inventory[0].inventoryId;
-  assert.throws(() => engine.upgrade(session.token, source, 'skin-20.01', { lucky: true, phoenix: true }), isError('LUCKY_CHANCE_TOO_LOW'));
-  for (const options of [{ lucky: 'true' }, { phoenix: 1 }, { lucky: null }, { phoenix: [] }, null, []]) assert.throws(() => engine.upgrade(session.token, source, 'skin-20', options), isError('INVALID_BOOSTER'));
+  assert.throws(() => engine.upgrade(session.token, source, 'skin-20.01', { lucky: true }), isError('LUCKY_CHANCE_TOO_LOW'));
+  for (const options of [{ lucky: 'true' }, { lucky: 1 }, { lucky: null }, { lucky: [] }, null, []]) assert.throws(() => engine.upgrade(session.token, source, 'skin-20', options), isError('INVALID_BOOSTER'));
   assert.equal(draws, 0);
   assert.deepEqual(engine.resume(session.token), session);
 });
@@ -191,11 +161,11 @@ test('legacy saves migrate with their money and inventory and invalid booster sa
   assert.equal(session.player.balance, 345);
   assert.equal(session.player.inventory[0].inventoryId, legacy.inventory[0].inventoryId);
   assert.deepEqual(session.player.boosters, initialBoosters);
-  session = engine.upgrade(session.token, session.player.inventory[0].inventoryId, 'skin-200', { phoenix: true });
-  assert.equal(session.player.boosters.phoenixRemaining, 9);
-  assert.equal(engine.resume(token).player.boosters.phoenixRemaining, 9);
-  assert.equal(game().resume(session.token).player.boosters.phoenixRemaining, 9);
-  for (const boosters of [null, {}, { phoenixRemaining: 11, luckyRemaining: 3 }, { phoenixRemaining: -1, luckyRemaining: 3 }, { phoenixRemaining: 10, luckyRemaining: 4 }, { phoenixRemaining: 10, luckyRemaining: 0.5 }, { phoenixRemaining: '10', luckyRemaining: 3 }]) {
+  session = engine.upgrade(session.token, session.player.inventory[0].inventoryId, 'skin-200', { lucky: true });
+  assert.equal(session.player.boosters.luckyRemaining, 2);
+  assert.equal(engine.resume(token).player.boosters.luckyRemaining, 2);
+  assert.equal(game().resume(session.token).player.boosters.luckyRemaining, 2);
+  for (const boosters of [null, {}, { luckyRemaining: -1 }, { luckyRemaining: 4 }, { luckyRemaining: 0.5 }, { luckyRemaining: '3' }]) {
     assert.throws(() => game().resume(fixtureToken({ ...legacy, boosters })), isError('INVALID_SESSION'));
   }
   const v2 = { ...legacy, v: 2, balanceCents: 34_500, boosters: initialBoosters };
@@ -203,6 +173,49 @@ test('legacy saves migrate with their money and inventory and invalid booster sa
   const missing = { ...v2 }; delete missing.boosters;
   assert.throws(() => game().resume(fixtureToken(missing)), isError('INVALID_SESSION'));
   assert.throws(() => game().resume(fixtureToken({ ...v2, balanceCents: 34_500.5 })), isError('INVALID_SESSION'));
+});
+
+test('v2 migration drops removed booster fields, preserves spent Lucky charges, and old request flags never save losses', async () => {
+  const legacy = {
+    v: 2, sid: randomUUID(), revision: 9, nickname: 'Старое сохранение', balanceCents: 12_345,
+    inventory: [{ inventoryId: randomUUID(), itemId: 'skin-22.5' }], wins: 5, attempts: 8,
+    boosters: { phoenixRemaining: 7, luckyRemaining: 0 }, unlocked: false,
+  };
+  const legacyToken = fixtureToken(legacy);
+  const engine = game({ random: () => 0 });
+  const server = createApplication({ game: engine });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const post = async (route, body) => {
+    const response = await fetch(base + route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  try {
+    const migrated = await post('/api/resume', { token: legacyToken });
+    assert.notEqual(migrated.token, legacyToken);
+    assert.equal(migrated.player.balance, 123.45);
+    assert.equal(migrated.player.inventory[0].inventoryId, legacy.inventory[0].inventoryId);
+    assert.equal(migrated.player.inventory[0].price, 22.5);
+    assert.equal(migrated.player.wins, 5);
+    assert.equal(migrated.player.attempts, 8);
+    assert.deepEqual(migrated.player.boosters, { luckyRemaining: 0 });
+    const saved = readFixtureToken(migrated.token);
+    assert.equal(saved.v, 3);
+    assert.deepEqual(saved.boosters, { luckyRemaining: 0 });
+    assert.ok(!JSON.stringify(saved).includes('phoenix'));
+    assert.deepEqual(game().resume(migrated.token), migrated);
+    assert.throws(() => engine.upgrade(migrated.token, legacy.inventory[0].inventoryId, 'skin-45', { lucky: true }), isError('LUCKY_EXHAUSTED'));
+    const lost = await post('/api/upgrade', { token: migrated.token, inventoryId: legacy.inventory[0].inventoryId, targetId: 'skin-45', phoenix: true });
+    assert.equal(lost.result.won, false);
+    assert.equal(lost.player.inventory.length, 0);
+    assert.equal(lost.player.balance, 123.45);
+    assert.equal(lost.player.attempts, 9);
+    assert.deepEqual(lost.player.boosters, { luckyRemaining: 0 });
+    assert.equal(Object.hasOwn(lost.result, 'savedByPhoenix'), false);
+    assert.equal(engine.resume(legacyToken).player.inventory.length, 0);
+    assert.deepEqual(readFixtureToken(lost.token).boosters, { luckyRemaining: 0 });
+  } finally { await new Promise((resolve) => server.close(resolve)); }
 });
 
 test('large catalog maps low prices to ordinary skins and high prices to premium skins', () => {
@@ -436,11 +449,10 @@ test('HTTP flow, safe static serving, JSON validation and private data boundarie
     const invalidChance = await post('/api/upgrade', { token: bought.payload.token, inventoryId: bought.payload.player.inventory[0].inventoryId, targetId: 'skin-200.01', lucky: true });
     assert.equal(invalidChance.status, 400);
     assert.equal(invalidChance.payload.code, 'LUCKY_CHANCE_TOO_LOW');
-    const lucky = await post('/api/upgrade', { token: bought.payload.token, inventoryId: bought.payload.player.inventory[0].inventoryId, targetId: 'skin-150', lucky: true, phoenix: true });
+    const lucky = await post('/api/upgrade', { token: bought.payload.token, inventoryId: bought.payload.player.inventory[0].inventoryId, targetId: 'skin-150', lucky: true });
     assert.equal(lucky.status, 200);
     assert.equal(lucky.payload.result.luckyUsed, true);
-    assert.equal(lucky.payload.result.savedByPhoenix, false);
-    assert.deepEqual(lucky.payload.player.boosters, { phoenixRemaining: 10, luckyRemaining: 2 });
+    assert.deepEqual(lucky.payload.player.boosters, { luckyRemaining: 2 });
     const upgraded = await post('/api/upgrade', { token: lucky.payload.token, inventoryId: lucky.payload.player.inventory[0].inventoryId, targetId: 'code' });
     assert.equal(upgraded.payload.player.unlockedCode, goalCode);
     assert.equal((await fetch(base + '/api/item?id=code')).status, 200);

@@ -10,7 +10,7 @@ let busy = false, shopPage = 1, targetPage = 1, rotation = 180;
 let shopSequence = 0, targetSequence = 0, selectionSequence = 0, toastTimer, audioContext;
 const DEFAULT_MULTIPLIERS = [1.5,2,5,10];
 let prefs = {sound:true,fast:false,multipliers:[...DEFAULT_MULTIPLIERS]};
-let phoenixArmed = false, luckyArmed = false, targetLoading = false, activeMultiplier = 2;
+let luckyArmed = false, targetLoading = false, activeMultiplier = 2;
 let pendingStorageValue;
 const cache = new Map([['code',goal]]);
 try { token = localStorage.getItem(SESSION_KEY); prefs = {...prefs,...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')}; } catch { /* Storage warning shown when saving. */ }
@@ -128,15 +128,14 @@ function renderSelection() {
   if (!busy) setStatus(targetLoading ? 'Подбираем цель…':!player ? 'Введите ник и получите 500 ₽ для старта':!source ? 'Купите скин в магазине и выберите его слева':!target ? 'Выберите предмет, который хотите получить':!valid ? 'Стоимость цели должна быть выше стоимости вашего скина':luckyArmed && chance<50 ? 'Для 777 нужен обычный шанс от 50%. Выберите более дешёвую цель.':luckyArmed ? `777: гарантированный успех · обычный шанс ${chance.toFixed(2).replace('.',',')}%`:`Шанс ${chance.toFixed(2).replace('.',',')}% · ${money(source.price)} → ${money(target.price)}`);
 }
 function renderBoosters(chance=0) {
-  const boosters=player?.boosters || {phoenixRemaining:10,luckyRemaining:3};
-  if(!busy && !boosters.phoenixRemaining) phoenixArmed=false;
-  if(!busy && !boosters.luckyRemaining) luckyArmed=false;
-  for(const [id,countId,key,armed] of [['phoenixToggle','phoenixCount','phoenixRemaining',phoenixArmed],['luckyToggle','luckyCount','luckyRemaining',luckyArmed]]) {
-    $(countId).textContent=boosters[key]; $(id).disabled=busy||!player||boosters[key]<=0;
-    $(id).classList.toggle('active',armed);$(id).setAttribute('aria-pressed',String(armed));
-  }
+  const remaining=player?.boosters?.luckyRemaining ?? 3;
+  if(!busy && !remaining) luckyArmed=false;
+  $('luckyCount').textContent=remaining;
+  $('luckyToggle').disabled=busy||!player||remaining<=0;
+  $('luckyToggle').classList.toggle('active',luckyArmed);
+  $('luckyToggle').setAttribute('aria-pressed',String(luckyArmed));
   $('winArc').closest('svg').classList.toggle('lucky-mode',luckyArmed);
-  $('boostHint').textContent=luckyArmed ? chance>=50 ? '777 · победа гарантирована':'777 · нужен обычный шанс от 50%':phoenixArmed ? 'Феникс сохранит скин при поражении':'Феникс: 10 спасений · 777: 3 победы';
+  $('boostHint').textContent=luckyArmed ? chance>=50 ? '777 · победа гарантирована':'777 · нужен обычный шанс от 50%':'777 · 3 гарантированные победы за сессию';
 }
 function multiplierPrice(price,multiplier) {
   const sourceCents=Math.round(price*100);
@@ -298,17 +297,17 @@ async function upgrade() {
   const previousSource = source;
   let finalStatus = '',finalKind='';
   try {
-    const data = await api('upgrade',{token,inventoryId:source.inventoryId,targetId:target.id,phoenix:phoenixArmed,lucky:luckyArmed});
+    const data = await api('upgrade',{token,inventoryId:source.inventoryId,targetId:target.id,lucky:luckyArmed});
     // Persist before animation: refreshing cannot repeat or undo the result.
     saveSnapshot(data,false); source=previousSource;
     await animatePointer(data.result.angle);
-    source=data.result.savedByPhoenix ? player.inventory.find((i)=>i.inventoryId===previousSource.inventoryId):null;
+    source=null;
     if(data.result.luckyUsed) luckyArmed=false;
     busy=false; renderPlayer(); switchMode('inventory'); sound(data.result.won);
-    finalStatus = data.result.won ? data.result.item.id==='code' ? 'Цель достигнута! Код открыт ниже и сохранён в инвентаре.':`${data.result.luckyUsed ? '777 · ':''}Успех! ${data.result.item.name} добавлен в инвентарь.`:data.result.savedByPhoenix ? `Феникс спас ${previousSource.name}. Осталось спасений: ${player.boosters.phoenixRemaining}.`:'Неудача. Выбранный скин потерян.';
-    finalKind=data.result.won || data.result.savedByPhoenix ? 'success':'error';
+    finalStatus = data.result.won ? data.result.item.id==='code' ? 'Цель достигнута! Код открыт ниже и сохранён в инвентаре.':`${data.result.luckyUsed ? '777 · ':''}Успех! ${data.result.item.name} добавлен в инвентарь.`:'Неудача. Выбранный скин потерян.';
+    finalKind=data.result.won ? 'success':'error';
     setStatus(finalStatus,finalKind);
-    if(!data.result.won && !data.result.savedByPhoenix && player.balance<10 && !player.inventory.some((i)=>i.id!=='code')) finalStatus='Скины закончились. Нажмите «Повторить сессию», чтобы начать заново.';
+    if(!data.result.won && player.balance<10 && !player.inventory.some((i)=>i.id!=='code')) finalStatus='Скины закончились. Нажмите «Повторить сессию», чтобы начать заново.';
   } catch(error) {
     toast(error.message);
     // Recover an already committed response if the connection dropped after mutation.
@@ -380,10 +379,6 @@ $('multiplierForm').addEventListener('submit',async(event)=>{
   prefs.multipliers=values;savePreferences();$('multiplierDialog').close();
   if(activeIndex>=0)await pickMultiplier(values[activeIndex],false);
   renderMultiplierButtons();toast('Множители сохранены.');
-});
-$('phoenixToggle').addEventListener('click',()=>{
-  if(busy||!player||(player.boosters?.phoenixRemaining??10)<=0)return;
-  phoenixArmed=!phoenixArmed;renderSelection();
 });
 $('luckyToggle').addEventListener('click',()=>{
   if(busy||!player||(player.boosters?.luckyRemaining??3)<=0)return;

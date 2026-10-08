@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import { createCipheriv, createHash, randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createGame, GameError } from '../lib/game.mjs';
 
@@ -11,12 +12,13 @@ const pageSource = await readFile(new URL('../public/index.html', import.meta.ur
 const appWithoutStartup = appSource.replace(/\binit\(\);\s*$/, '');
 const SESSION_KEY = 'upgrade.session.v1';
 const PREFS_KEY = 'upgrade.preferences.v1';
+const TEST_SECRET = 'frontend-test-secret-01234567890123456789';
 const artwork = [{ name: 'Test skin', weapon: 'AWP', image: '/assets/test.png', rarity: 'blue' }];
 const settled = () => new Promise((resolve) => setImmediate(resolve));
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 
 function harness({ random = () => 0.5, engine, savedToken, preferences, intercept } = {}) {
-  engine ||= createGame({ secret: 'frontend-test-secret-01234567890123456789', goalCode: '1234567890', artworks: artwork, random });
+  engine ||= createGame({ secret: TEST_SECRET, goalCode: '1234567890', artworks: artwork, random });
   const elements = new Map(), documentListeners = new Map(), windowListeners = new Map();
   const storage = new Map(), frames = new Map(), timers = new Map();
   const requests = [], dialogs = [], audio = [], trace = [];
@@ -76,7 +78,7 @@ function harness({ random = () => 0.5, engine, savedToken, preferences, intercep
       else if (path === '/api/resume') result = engine.resume(body.token);
       else if (path === '/api/buy') result = engine.buy(body.token, body.itemId);
       else if (path === '/api/sell') result = engine.sell(body.token, body.inventoryId);
-      else if (path === '/api/upgrade') result = engine.upgrade(body.token, body.inventoryId, body.targetId, { phoenix: body.phoenix, lucky: body.lucky });
+      else if (path === '/api/upgrade') result = engine.upgrade(body.token, body.inventoryId, body.targetId, { lucky: body.lucky });
       else if (path === '/api/reset') result = engine.reset(body.token);
       else throw new Error(`Unexpected route: ${path}`);
       return { ok: true, status: 200, json: async () => structuredClone(result) };
@@ -230,7 +232,7 @@ test('777 sends its flag, wins at exactly 50%, and restores the authoritative re
   await h.dispatch('luckyToggle', 'click');
   const spinning = h.evaluate('upgrade()'); await h.finishAnimation(); await spinning;
   const request = h.requests.find((r) => r.path === '/api/upgrade');
-  assert.equal(request.body.lucky, true); assert.equal(request.body.phoenix, false);
+  assert.equal(request.body.lucky, true); assert.equal(Object.hasOwn(request.body, 'phoenix'), false);
   assert.equal(h.plain('player.inventory')[0].id, 'skin-20');
   assert.equal(h.element('luckyCount').textContent, '2');
   assert.equal(h.evaluate('luckyArmed'), false);
@@ -255,23 +257,37 @@ test('an exhausted 777 snapshot disarms the booster and re-enables an otherwise 
   assert.equal(h.element('upgradeButton').disabled, false);
 });
 
-test('Phoenix keeps the source on ten losses, decrements only server snapshots, and turns off when exhausted', async () => {
-  const h = harness({ random: () => 0 }); const original = h.seed(); h.evaluate('prefs.fast=true');
-  await h.dispatch('phoenixToggle', 'click');
-  for (let count = 9; count >= 0; count--) {
-    const spinning = h.evaluate('upgrade()');
-    await h.dispatch('phoenixToggle', 'click'); // repeated interaction while busy cannot disarm the request
-    await h.finishAnimation(); await spinning;
-    assert.equal(h.element('phoenixCount').textContent, String(count));
-    assert.equal(h.plain('player.inventory')[0].inventoryId, original.player.inventory[0].inventoryId);
-    assert.equal(h.evaluate('source.inventoryId'), original.player.inventory[0].inventoryId);
-  }
-  assert.equal(h.evaluate('phoenixArmed'), false); assert.equal(h.element('phoenixToggle').disabled, true);
-  const finalSpin = h.evaluate('upgrade()'); await h.finishAnimation(); await finalSpin;
+test('a legacy save with Phoenix charges resumes normally but a loss removes the skin without Phoenix controls or requests', async () => {
+  const legacyState = {
+    v: 2, sid: 'legacy-frontend-session', revision: 4, nickname: 'Legacy Player', balanceCents: 40000,
+    inventory: [{ inventoryId: 'legacy-skin', itemId: 'skin-100' }], wins: 0, attempts: 0,
+    boosters: { phoenixRemaining: 10, luckyRemaining: 2 }, unlocked: false,
+  };
+  const iv = randomBytes(12), key = createHash('sha256').update(TEST_SECRET).digest();
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  cipher.setAAD(Buffer.from('upgrade-session-v1'));
+  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(legacyState), 'utf8'), cipher.final()]);
+  const savedToken = Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString('base64url');
+  const h = harness({ random: () => 0, savedToken });
+  await h.evaluate('init()');
+  assert.equal(h.element('nickname').textContent, 'Legacy Player');
+  assert.equal(h.element('luckyCount').textContent, '2');
+  assert.deepEqual(h.plain('player.boosters'), { luckyRemaining: 2 });
+  assert.equal(h.element('phoenixToggle'), undefined);
+  assert.doesNotMatch(pageSource, /phoenix|феникс/i);
+  assert.doesNotMatch(appSource, /phoenix|феникс/i);
+  await h.evaluate('selectSource("legacy-skin")');
+  h.evaluate('prefs.fast=true');
+  const spinning = h.evaluate('upgrade()'); await h.finishAnimation(); await spinning;
   assert.equal(h.plain('player.inventory').length, 0);
-  const upgrades = h.requests.filter((r) => r.path === '/api/upgrade');
-  assert.ok(upgrades.slice(0, 10).every((r) => r.body.phoenix));
-  assert.equal(upgrades[10].body.phoenix, false);
+  assert.equal(h.evaluate('source'), null);
+  assert.equal(h.element('inventoryCount').textContent, '0');
+  assert.match(h.element('statusLine').textContent, /Неудача.*потерян/);
+  const request = h.requests.find((r) => r.path === '/api/upgrade');
+  assert.equal(Object.hasOwn(request.body, 'phoenix'), false);
+  assert.equal(request.body.lucky, false);
+  assert.equal(h.dialogs.length, 0);
+  assert.equal(h.engine.resume(h.storage.get(SESSION_KEY)).player.inventory.length, 0);
 });
 
 test('rotation schedules ticks while moving and respects muting during the same animation', async () => {

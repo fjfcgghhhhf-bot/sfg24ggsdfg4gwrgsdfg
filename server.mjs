@@ -71,7 +71,7 @@ export function createApplication({ game, publicDir = path.join(DIRECTORY, 'publ
           '/api/resume': () => game.resume(body.token),
           '/api/buy': () => game.buy(body.token, body.itemId),
           '/api/sell': () => game.sell(body.token, body.inventoryId),
-          '/api/upgrade': () => game.upgrade(body.token, body.inventoryId, body.targetId, { phoenix: body.phoenix, lucky: body.lucky }),
+          '/api/upgrade': () => game.upgrade(body.token, body.inventoryId, body.targetId, { lucky: body.lucky }),
           '/api/reset': () => game.reset(body.token),
         };
         if (!Object.hasOwn(handlers, url.pathname)) throw new GameError('Маршрут не найден.', 'NOT_FOUND', 404);
