@@ -85,3 +85,21 @@ test('real Firebase stores and streams messages, presence and colors in an isola
   try{await community.heartbeat(alice);await community.saveStyle(alice,DEFAULT_WHEEL_STYLE);await community.message(alice,'isolated test',randomUUID());const stored=await database.read(root);assert.equal(stored.presence.alice.nickname,'Firebase test');assert.equal(Object.keys(stored.messages).length,1);assert.equal(stored.styles.alice.start,DEFAULT_WHEEL_STYLE.start);const streamed=await received;assert.equal(Object.values(streamed.messages)[0].text,'isolated test');}
   finally{clearTimeout(deadline);unsubscribe?.();await database.write(root,null);community.close();}
 });
+
+test('Firebase SSE parses split UTF-8 and CRLF frames, nested patches and deletion',async()=>{
+  const {privateKey}=generateKeyPairSync('rsa',{modulusLength:2048});
+  const frames=[
+    ['put',{path:'/',data:{presence:{a:{nickname:'Алиса'}},messages:{old:{text:'old'}}}}],
+    ['patch',{path:'/',data:{'presence/b':{nickname:'Боб'},'messages/old':null}}],
+    ['put',{path:'/presence/a',data:null}],
+  ].map(([event,data])=>`event: ${event}\r\ndata: ${JSON.stringify(data)}\r\n\r\n`).join('');
+  const bytes=new TextEncoder().encode(frames);
+  const client=createFirebase({url:'https://unit-test.firebaseio.com/',serviceAccount:{client_email:'test@unit.iam.gserviceaccount.com',private_key:privateKey.export({type:'pkcs8',format:'pem'})},fetchImpl:async(url)=>{
+    if(String(url).includes('oauth2'))return Response.json({access_token:'test-token',expires_in:3600});
+    return new Response(new ReadableStream({start(controller){for(let offset=0;offset<bytes.length;offset+=3)controller.enqueue(bytes.slice(offset,offset+3));controller.close();}}),{headers:{'Content-Type':'text/event-stream'}});
+  }});
+  const snapshots=[];let unsubscribe,timeout;
+  try{await new Promise((resolve,reject)=>{timeout=setTimeout(()=>reject(new Error('No SSE snapshot')),2000);unsubscribe=client.subscribe('test',(data)=>{snapshots.push(data);if(snapshots.length===3)resolve();});});
+    assert.equal(snapshots[0].presence.a.nickname,'Алиса');assert.equal(snapshots[1].presence.b.nickname,'Боб');assert.ok(!snapshots[1].messages.old);assert.ok(!snapshots[2].presence.a);
+  }finally{clearTimeout(timeout);unsubscribe?.();client.close();}
+});
