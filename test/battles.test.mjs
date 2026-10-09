@@ -50,7 +50,7 @@ test('a third player cannot take a filled slot and one player cannot reserve mul
   assert.equal(game.resume(third.token).player.balance,500);
   assert.equal(game.resume(bob.token).player.balance,400);
 });
-test('unlimited chains, 90 percent cap, booster prohibition, stop, and one-time payout',()=>{
+test('unlimited chains, 75 percent cap, booster prohibition, stop, and one-time payout',()=>{
   const {game,advance}=setup(),{alice,bob,id}=duel(game);
   const original=game.battles.state(alice.token,id).battle.players[0].chains[0];
   assert.throws(()=>game.battles.upgrade(alice.token,id,original.id,'skin-100',0,true),error('BATTLE_BOOSTER_DISABLED'));

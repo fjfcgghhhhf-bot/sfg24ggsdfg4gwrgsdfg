@@ -19,3 +19,7 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
+      - key: FIREBASE_DATABASE_URL
+        value: https://upgrader-c809b-default-rtdb.firebaseio.com/
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false

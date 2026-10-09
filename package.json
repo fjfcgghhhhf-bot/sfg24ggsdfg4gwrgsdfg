@@ -11,7 +11,7 @@
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
     "test": "node --test test/*.test.mjs",
-    "build": "node --check server.mjs && node --check lib/battles.mjs && node --check lib/store.mjs && node --check public/app.js && node --check public/social.js"
+    "build": "node --check server.mjs && node --check lib/battles.mjs && node --check lib/store.mjs && node --check lib/firebase.mjs && node --check lib/community.mjs && node --check public/app.js && node --check public/social.js && node --check public/community.js"
   },
   "dependencies": {
     "pg": "^8.23.1"

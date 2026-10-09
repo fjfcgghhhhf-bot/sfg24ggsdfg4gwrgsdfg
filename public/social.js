@@ -1,10 +1,12 @@
-export function createSocial({$,document,window,getPlayer,getToken,isBusy,setBusy,saveSnapshot,api,toast,showDialog,esc,money,primeAudio,spinTick,sound,initialView}) {
+export function createSocial({$,document,window,getPlayer,getToken,isBusy,setBusy,saveSnapshot,api,toast,showDialog,esc,money,primeAudio,spinTick,sound,initialView,getFast=()=>false,isOnline=()=>false,onProfile=()=>{}}) {
   let view='upgrade',battle=null,selectedId=null,chainId=null,target=null,targetSequence=0,profileSequence=0,profileId=null,arenaVisible=true;
   let pending=false,spinning=false,refreshing=false,started=false,pollTimer,clockTimer,offset=0,rotation=180;
+  let watchFrame=null,watchBase={server:Date.now(),local:performance.now()};
+  const watchStyles=new Map();
   const player=()=>getPlayer(),active=()=>battle?.status==='active',mine=()=>battle?.players.find((p)=>p.id===player()?.id);
   const chain=()=>mine()?.chains.find((c)=>c.id===chainId);
   const cents=(price)=>Math.round(price*100);
-  const canUpgrade=(item)=>item&&cents(item.price)*100<=49_999_999*90;
+  const canUpgrade=(item)=>item&&cents(item.price)*100<=49_999_999*75;
   const date=(at)=>new Intl.DateTimeFormat('ru-RU',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}).format(new Date(at));
   const battleNow=()=>Date.now()+offset;
   const remaining=()=>battle?.endsAt ? Math.max(0,battle.endsAt-battleNow()):0;
@@ -13,6 +15,7 @@ export function createSocial({$,document,window,getPlayer,getToken,isBusy,setBus
     if(data.player)saveSnapshot(data);
     if(data.battle && battle?.id===data.battle.id && data.battle.revision<battle.revision)return;
     battle=data.battle;offset=battle?battle.serverNow-Date.now():0;
+    watchBase={server:battle?.serverNow||Date.now(),local:performance.now()};
     renderBattle();
   }
   async function profile(id,page=1) {
@@ -25,11 +28,12 @@ export function createSocial({$,document,window,getPlayer,getToken,isBusy,setBus
       if(sequence!==profileSequence)return;
       $('profileTitle').textContent=data.nickname;
       const best=data.bestDrop;
-      $('profileContent').innerHTML=`<div class="profile-stats"><div><span>Баланс</span><strong>${money(data.balance)}</strong></div><div><span>Успешные апгрейды</span><strong>${data.wins} <small>/ ${data.attempts}</small></strong></div><div><span>Победы в батлах</span><strong>${data.battleWins} <small>/ ${data.battlesPlayed}</small></strong></div></div>
+      $('profileContent').innerHTML=`<div class="profile-social"><span id="profilePresence" class="${isOnline(id)?'is-online':''}">${isOnline(id)?'В сети':'Не в сети'}</span><button id="profileChallenge" class="button secondary" data-action="challenge" data-key="${esc(id)}" ${!isOnline(id)||id===player()?.id?'disabled':''}>⚔ Вызвать на батл</button></div><div class="profile-stats"><div><span>Баланс</span><strong>${money(data.balance)}</strong></div><div><span>Успешные апгрейды</span><strong>${data.wins} <small>/ ${data.attempts}</small></strong></div><div><span>Победы в батлах</span><strong>${data.battleWins} <small>/ ${data.battlesPlayed}</small></strong></div></div>
         <div class="profile-best"><div><p class="eyebrow">САМЫЙ ДОРОГОЙ ДРОП</p><h3>${best?esc(best.item.name):'Новых дропов пока нет'}</h3><span>${best?`${esc(best.item.weapon)} · ${money(best.item.price)} · ${best.mode==='battle'?'Батл':'Апгрейд'}`:'Лучший предмет отслеживается с появления профилей'}</span></div>${best?`<img src="${esc(best.item.image)}" alt="${esc(best.item.name)}" width="150" height="100">`:''}</div>
         <div class="profile-history-heading"><h3>История апгрейдов</h3><span>Последние ${data.historyCount} из 200</span></div>
         <div class="profile-history">${data.history.length?data.history.map((entry)=>`<article class="profile-history-row"><span class="history-outcome ${entry.won?'won':'lost'}">${entry.won?'ПОБЕДА':'ПОРАЖЕНИЕ'}</span><div><span>${esc(entry.source.weapon)} · ${esc(entry.source.name)} <b>${money(entry.source.price)}</b></span><strong>→ ${esc(entry.target.name)} <b>${money(entry.target.price)}</b></strong></div><div class="history-meta"><span>${entry.chance.toLocaleString('ru-RU',{maximumFractionDigits:2})}% · ${entry.mode==='battle'?'Батл':entry.lucky?'777':'Апгрейд'}</span><time>${date(entry.at)}</time></div></article>`).join(''):'<p class="social-empty">Новых попыток пока нет. История записывается с появления профилей.</p>'}</div>
         <div class="profile-pager"><button class="button secondary" data-action="profile-page" data-key="${data.page-1}" ${data.page<=1?'disabled':''}>←</button><span>${data.page} / ${data.pages}</span><button class="button secondary" data-action="profile-page" data-key="${data.page+1}" ${data.page>=data.pages?'disabled':''}>→</button></div>`;
+      onProfile(id);
     } catch(error){if(sequence===profileSequence){$('profileTitle').textContent='Профиль';$('profileContent').innerHTML=`<p class="social-empty">${esc(error.message)}</p>`;}}
   }
   function open(next) {
@@ -43,11 +47,36 @@ export function createSocial({$,document,window,getPlayer,getToken,isBusy,setBus
     const current=data.battles.find((b)=>b.players.some((p)=>p.id===player()?.id));
     $('battleListCount').textContent=`${data.battles.length} сражений`;
     $('battleCreateButton').disabled=pending||!player()||Boolean(current);
-    $('battleList').innerHTML=data.battles.length?data.battles.map((b)=>`<article class="battle-lobby-card"><div class="battle-versus"><button data-action="profile" data-key="${esc(b.players[0].id)}">${esc(b.players[0].nickname)}</button><span>VS</span><strong>${b.players[1]?esc(b.players[1].nickname):'Ждёт вас'}</strong></div><div class="battle-lobby-terms"><div><span>Взнос</span><strong>${money(b.deposit)}</strong></div><div><span>Цепочки</span><strong>${b.count}</strong></div><span class="battle-tag">${b.status==='waiting'?'ОТКРЫТ':'ИДЁТ БАТЛ'}</span></div><button class="button ${b.status==='waiting'?'primary':'secondary'}" data-action="${b.players.some((p)=>p.id===player()?.id)||b.status==='active'?'battle-view':'battle-join'}" data-key="${b.id}" ${pending||!player()?'disabled':''}>${b.players.some((p)=>p.id===player()?.id)?'Мой батл':b.status==='active'?'Смотреть':`Вступить · ${money(b.deposit)}`}</button></article>`).join(''):'<div class="social-empty"><strong>Пока нет открытых батлов</strong><span>Создайте первый и дождитесь соперника.</span></div>';
+    $('battleList').innerHTML=data.battles.length?data.battles.map((b)=>`<article class="battle-lobby-card"><div class="battle-versus"><button data-action="profile" data-key="${esc(b.players[0].id)}">${esc(b.players[0].nickname)}</button><span>VS</span><strong>${b.players[1]?esc(b.players[1].nickname):'Ждёт вас'}</strong></div><div class="battle-lobby-terms"><div><span>Взнос</span><strong>${money(b.deposit)}</strong></div><div><span>Цепочки</span><strong>${b.count}</strong></div><span class="battle-tag">${b.status==='waiting'?(b.targetPlayerId?'ЛИЧНЫЙ ВЫЗОВ':'ОТКРЫТ'):'ИДЁТ БАТЛ'}</span></div><button class="button ${b.status==='waiting'?'primary':'secondary'}" data-action="${b.players.some((p)=>p.id===player()?.id)||b.status==='active'?'battle-view':'battle-join'}" data-key="${b.id}" ${pending||!player()||(b.targetPlayerId&&b.targetPlayerId!==player()?.id&&!b.players.some((p)=>p.id===player()?.id)&&b.status==='waiting')?'disabled':''}>${b.players.some((p)=>p.id===player()?.id)?'Мой батл':b.status==='active'?'Смотреть':`Вступить · ${money(b.deposit)}`}</button></article>`).join(''):'<div class="social-empty"><strong>Пока нет открытых батлов</strong><span>Создайте первый и дождитесь соперника.</span></div>';
+  }
+  function watchWheel(p,self){
+    if(self)return '';
+    const spin=p.lastSpin,chance=spin?.chance||50;
+    const style=p.style||watchStyles.get(p.id);
+    const color=(key,fallback)=>/^#[0-9a-f]{6}$/i.test(style?.[key]||'')?style[key]:fallback;
+    const center=spin?`${chance.toLocaleString('ru-RU',{maximumFractionDigits:2})}%`:'—';
+    return `<div class="spectator-wheel-wrap"><svg class="spectator-wheel" viewBox="0 0 400 400" role="img" aria-label="Колесо ${esc(p.nickname)}"><defs><linearGradient id="spectatorGradient-${p.id}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${color('start','#ffdc00')}"/><stop offset="1" stop-color="${color('end','#ef3e25')}"/></linearGradient></defs><circle class="wheel-track" cx="200" cy="200" r="153"/><path fill="none" stroke="url(#spectatorGradient-${p.id})" stroke-width="31" d="M200 47 A153 153 0 0 1 200 353 A153 153 0 0 1 200 47" pathLength="100" stroke-dasharray="${chance} ${100-chance}" stroke-dashoffset="${-(50-chance/2)}"/><circle class="wheel-disc" cx="200" cy="200" r="116"/><path d="m164 164 36-27 36 27v23l-36-27-36 27z" fill="${color('center','#ffdc00')}"/><text x="200" y="233" text-anchor="middle" class="spectator-chance">${center}</text><g id="watchPointer-${p.id}" transform="rotate(${spin?.angle??180} 200 200)"><path d="m200 67-8-23 8 7 8-7-8 23Z" fill="${color('pointer','#ffe100')}"/><path d="M200 51V18" stroke="${color('pointer','#ffe100')}" stroke-width="2"/></g></svg><span id="watchStatus-${p.id}">${spin?'Последняя попытка':'Ожидает апгрейда'}</span></div>`;
+  }
+  function animateWatch(){
+    if(watchFrame!==null){cancelAnimationFrame(watchFrame);watchFrame=null;}
+    if(view!=='battles'||!arenaVisible||!battle)return;
+    function frame(){
+      let running=false;const time=watchBase.server+performance.now()-watchBase.local;
+      for(const p of battle.players){
+        const spin=p.lastSpin,element=$(`watchPointer-${p.id}`),label=$(`watchStatus-${p.id}`);if(!spin||!element)continue;
+        const t=window.matchMedia('(prefers-reduced-motion: reduce)').matches?1:Math.min(1,Math.max(0,(time-spin.startedAt)/spin.duration));
+        const end=180+360*spin.turns+((spin.angle-180+360)%360),angle=180+(end-180)*(1-(1-t)**3);
+        element.setAttribute('transform',`rotate(${angle} 200 200)`);
+        if(label)label.textContent=t<1?'Прокрутка…':spin.won?'Успешный апгрейд':'Скин потерян';
+        if(t<1)running=true;
+      }
+      watchFrame=running?requestAnimationFrame(frame):null;
+    }
+    frame();
   }
   function playerPanel(p,self) {
     if(!p)return '<div class="battle-await"><strong>Ищем соперника</strong><span>Батл начнётся, когда второй игрок внесёт депозит. До этого взнос можно вернуть.</span></div>';
-    return `<div class="battle-player-header"><div><span>${self?'ВАШИ ЦЕПОЧКИ':'СОПЕРНИК'}</span><button data-action="profile" data-key="${p.id}">${esc(p.nickname)}</button></div><strong>${money(p.total)}</strong></div><div class="battle-chain-grid">${p.chains.map((c)=>`<button class="battle-chain ${c.id===chainId&&self?'selected':''} ${!c.item?'chain-lost':''}" data-action="battle-chain" data-key="${c.id}" ${!self||!active()||p.stopped||!canUpgrade(c.item)||pending?'disabled':''}><span>#${c.index} · ${c.attempts} попыток</span>${c.item?`<img src="${esc(c.item.image)}" alt="${esc(c.item.name)}" width="110" height="70"><strong>${money(c.item.price)}</strong><small>${esc(c.item.name)}</small>`:'<div class="chain-cross">×</div><strong>Скин потерян</strong>'}</button>`).join('')}</div><p class="battle-player-status">${p.stopped?'Результат зафиксирован':battle.status==='waiting'?'Готов к старту':active()?'Продолжает апгрейды':'Батл завершён'} · ${p.attempts} попыток</p>`;
+    return `<div class="battle-player-header"><div><span>${self?'ВАШИ ЦЕПОЧКИ':mine()?'СОПЕРНИК':'ИГРОК'}</span><button data-action="profile" data-key="${p.id}">${esc(p.nickname)}</button></div><strong>${money(p.total)}</strong></div>${watchWheel(p,self)}<div class="battle-chain-grid">${p.chains.map((c)=>`<button class="battle-chain ${c.id===chainId&&self?'selected':''} ${!c.item?'chain-lost':''}" data-action="battle-chain" data-key="${c.id}" ${!self||!active()||p.stopped||!canUpgrade(c.item)||pending?'disabled':''}><span>#${c.index} · ${c.attempts} попыток</span>${c.item?`<img src="${esc(c.item.image)}" alt="${esc(c.item.name)}" width="110" height="70"><strong>${money(c.item.price)}</strong><small>${esc(c.item.name)}</small>`:'<div class="chain-cross">×</div><strong>Скин потерян</strong>'}</button>`).join('')}</div><p class="battle-player-status">${p.stopped?'Результат зафиксирован':battle.status==='waiting'?'Готов к старту':active()?'Продолжает апгрейды':'Батл завершён'} · ${p.attempts} попыток</p>`;
   }
   function renderBattle() {
     if(!battle){$('battleArena').hidden=true;$('battleLobby').hidden=false;return;}
@@ -65,11 +94,11 @@ export function createSocial({$,document,window,getPlayer,getToken,isBusy,setBus
     const ended=['finished','cancelled'].includes(battle.status);
     $('battleResult').hidden=!ended;
     if(ended){$('battleResult').textContent=battle.status==='cancelled'?'Батл отменён. Взнос возвращён.':battle.tie?'Ничья. Оба взноса возвращены.':`${battle.players.find((p)=>p.id===battle.winnerId)?.nickname} побеждает и получает ${money(battle.bank)}!`;}
-    renderTarget();updateClock();
+    renderTarget();updateClock();animateWatch();
     if(active()&&me&&!me.stopped&&chain()&&!target&&!pending)chooseChance(Number($('battleChance').value)||50);
   }
   function renderTarget() {
-    const source=chain()?.item,valid=source&&target&&cents(source.price)*100<=cents(target.price)*90;
+    const source=chain()?.item,valid=source&&target&&cents(source.price)*100<=cents(target.price)*75;
     const chance=valid?source.price/target.price*100:0;
     $('battleTarget').innerHTML=target?`<img src="${esc(target.image)}" alt="${esc(target.name)}" width="170" height="100"><span>${esc(target.weapon)}</span><strong>${esc(target.name)}</strong><b>${money(target.price)}</b>`:'<p class="social-empty">Выберите доступную цепочку</p>';
     $('battleChanceValue').textContent=valid?`${chance.toLocaleString('ru-RU',{maximumFractionDigits:2})}%`:'—';
@@ -87,11 +116,11 @@ export function createSocial({$,document,window,getPlayer,getToken,isBusy,setBus
   }
   async function chooseChance(chance) {
     if(pending||!chain()?.item)return;
-    if(!Number.isFinite(chance)||chance<=0||chance>90){toast('Шанс должен быть больше 0 и не выше 90%.');return;}
+    if(!Number.isFinite(chance)||chance<=0||chance>75){toast('Шанс должен быть больше 0 и не выше 75%.');return;}
     const sequence=++targetSequence,source=chain().item,id=chainId;
     $('battleChance').value=String(chance);
-    const price=Math.min(499999.99,Math.max(Math.ceil(cents(source.price)*100/90),Math.ceil(cents(source.price)*100/chance))/100);
-    if(cents(source.price)*100>cents(price)*90){target=null;renderTarget();return;}
+    const price=Math.min(499999.99,Math.max(Math.ceil(cents(source.price)*100/75),Math.ceil(cents(source.price)*100/chance))/100);
+    if(cents(source.price)*100>cents(price)*75){target=null;renderTarget();return;}
     target=null;$('battleUpgradeButton').disabled=true;
     try {const item=await api(`item?id=skin-${price}`);if(sequence!==targetSequence||chainId!==id||chain()?.item?.id!==source.id)return;target=item;renderTarget();}
     catch(error){if(sequence===targetSequence){target=null;renderTarget();toast(error.message);}}
@@ -121,7 +150,7 @@ export function createSocial({$,document,window,getPlayer,getToken,isBusy,setBus
   }
   async function animate(angle,duration) {
     const reduced=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const start=rotation,end=start+360*(2+Math.floor(Math.random()*2))+((angle-start%360+360)%360),began=performance.now();
+    const start=180,end=start+360*3+((angle-180+360)%360),began=performance.now();
     let lastSector=Math.floor(rotation/24),lastTick=-100;
     return new Promise((resolve)=>{function frame(now){const t=reduced?1:Math.min(1,(now-began)/duration),progress=1-Math.pow(1-t,3);rotation=t===1?end:start+(end-start)*progress;$('battlePointer').setAttribute('transform',`rotate(${rotation} 200 200)`);const sector=Math.floor(rotation/24);if(t<1&&sector!==lastSector&&now-lastTick>35){spinTick();lastTick=now;lastSector=sector;}if(t<1)requestAnimationFrame(frame);else resolve();}requestAnimationFrame(frame);});
   }
@@ -131,7 +160,7 @@ export function createSocial({$,document,window,getPlayer,getToken,isBusy,setBus
     const selected=chain(),chosenTarget=target;renderBattle();$('battleSpinStatus').textContent='Круг вращается…';
     let message='';
     try {
-      const data=await api('battle/upgrade',{token:getToken(),battleId:battle.id,chainId:selected.id,targetId:chosenTarget.id,attempt:selected.attempts,lucky:false});
+      const data=await api('battle/upgrade',{token:getToken(),battleId:battle.id,chainId:selected.id,targetId:chosenTarget.id,attempt:selected.attempts,lucky:false,fast:getFast()});
       saveSnapshot(data,false);await animate(data.result.angle,data.spinDuration);sound(data.result.won);
       message=data.result.won?`Успех! ${data.result.item.name} · ${money(data.result.item.price)}`:'Скин потерян. Выберите другую цепочку.';
       target=null;apply(data);
@@ -167,7 +196,10 @@ export function createSocial({$,document,window,getPlayer,getToken,isBusy,setBus
     async function poll(){if(!started)return;if(view==='battles'||player())await refresh();pollTimer=setTimeout(poll,view==='battles'?2000:5000);}
     pollTimer=setTimeout(poll,1000);
   }
-  window.addEventListener('pagehide',()=>{started=false;clearTimeout(pollTimer);clearTimeout(clockTimer);});
+  window.addEventListener('pagehide',()=>{started=false;clearTimeout(pollTimer);clearTimeout(clockTimer);if(watchFrame!==null)cancelAnimationFrame(watchFrame);});
   window.addEventListener('pageshow',start);
-  return {start,profile,open,refresh,spin,chooseChance,init(){start();if(initialView==='#battles')open('battles');}};
+  return {start,profile,open,refresh,spin,chooseChance,
+    showBattle(data){selectedId=data.battle.id;arenaVisible=true;target=null;apply(data);open('battles');},
+    receiveBattle(data){for(const p of data.players)if(p.style)watchStyles.set(p.id,p.style);if(battle?.id===data.id&&!pending&&!spinning)apply({battle:data});},
+    init(){start();if(initialView==='#battles')open('battles');}};
 }

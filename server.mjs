@@ -7,6 +7,8 @@ import { createGame, GameError } from './lib/game.mjs';
 import { loadConfiguration } from './lib/config.mjs';
 import { createLiveDrops } from './lib/live-drops.mjs';
 import { createPostgresStore } from './lib/store.mjs';
+import {createFirebase} from './lib/firebase.mjs';
+import {createCommunity} from './lib/community.mjs';
 
 const DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.woff': 'font/woff', '.mp3': 'audio/mpeg', '.wav': 'audio/wav' };
@@ -37,11 +39,14 @@ async function readJSON(request) {
   } catch { throw new GameError('Некорректный JSON.', 'INVALID_JSON'); }
 }
 
-export function createApplication({ game, publicDir = path.join(DIRECTORY, 'public'), trustProxy = false, store }) {
+export function createApplication({ game, publicDir = path.join(DIRECTORY, 'public'), trustProxy = false, store, community }) {
   publicDir = path.resolve(publicDir);
   const rates = new Map();
   const liveDrops = createLiveDrops();
   const run=(fn)=>store ? store.run(()=>{game.battles.tick();return fn();}):Promise.resolve().then(()=>{game.battles.tick();return fn();});
+  const published=new Map();
+  const requireCommunity=()=>{if(!community)throw new GameError('Общение временно недоступно. Попробуйте позже.','COMMUNITY_OFFLINE',503);return community;};
+  async function publish(battle){if(community&&battle&&published.get(battle.id)!==battle.revision){await community.publishBattle(battle);published.set(battle.id,battle.revision);}}
   let lastSweep = 0;
   const server = http.createServer(async (request, response) => {
     response.setHeader('X-Content-Type-Options', 'nosniff');
@@ -68,12 +73,27 @@ export function createApplication({ game, publicDir = path.join(DIRECTORY, 'publ
         }
         if (request.method === 'GET' && url.pathname === '/api/catalog') return sendJSON(response, 200, game.catalog.list(Object.fromEntries(url.searchParams)));
         if (request.method === 'GET' && url.pathname === '/api/item') return sendJSON(response, 200, game.catalog.get(url.searchParams.get('id')));
+        if (request.method === 'GET' && url.pathname === '/api/community') return sendJSON(response,200,requireCommunity().snapshot());
+        if (request.method === 'GET' && url.pathname === '/api/community/stream') return requireCommunity().connect(response);
         if (request.method === 'GET' && url.pathname === '/api/profile') return sendJSON(response,200,await run(()=>game.profile(url.searchParams.get('id'),url.searchParams.get('page'))));
         if (request.method === 'GET' && url.pathname === '/api/battles') return sendJSON(response,200,await run(()=>game.battles.list()));
         if (request.method === 'GET' && url.pathname === '/api/live-drops') return sendJSON(response, 200, { drops: liveDrops.list() });
         if (request.method === 'GET' && url.pathname === '/api/live-drops/stream') return liveDrops.connect(response);
         if (request.method !== 'POST') throw new GameError('Метод не поддерживается.', 'METHOD_NOT_ALLOWED', 405);
         const body = await readJSON(request);
+        if(['/api/presence','/api/chat','/api/wheel-style','/api/challenge'].includes(url.pathname)){
+          const social=requireCommunity(),identity=await run(()=>game.resume(body.token));
+          if(url.pathname==='/api/presence')return sendJSON(response,200,await social.heartbeat(identity.player));
+          if(url.pathname==='/api/chat')return sendJSON(response,200,await social.message(identity.player,body.text,body.requestId));
+          if(url.pathname==='/api/wheel-style')return sendJSON(response,200,await social.saveStyle(identity.player,body.style));
+          if(!social.isOnline(body.playerId))throw new GameError('Игрок сейчас не в сети.','PLAYER_OFFLINE');
+          const created=await run(()=>game.battles.create(body.token,body.amount,body.count,body.playerId));
+          try{await publish(created.battle);}catch{
+            const cancelled=await run(()=>game.battles.cancel(created.token,created.battle.id));
+            throw new GameError('Вызов не доставлен. Взнос возвращён.','CHALLENGE_UNDELIVERED',503,cancelled);
+          }
+          return sendJSON(response,200,created);
+        }
         const handlers = {
           '/api/session': () => game.start(body.nickname),
           '/api/resume': () => game.resume(body.token),
@@ -87,11 +107,15 @@ export function createApplication({ game, publicDir = path.join(DIRECTORY, 'publ
           '/api/battle/create': () => game.battles.create(body.token,body.amount,body.count),
           '/api/battle/join': () => game.battles.join(body.token,body.battleId),
           '/api/battle/cancel': () => game.battles.cancel(body.token,body.battleId),
+          '/api/battle/decline': () => game.battles.decline(body.token,body.battleId),
           '/api/battle/stop': () => game.battles.stop(body.token,body.battleId),
-          '/api/battle/upgrade': () => game.battles.upgrade(body.token,body.battleId,body.chainId,body.targetId,body.attempt,body.lucky),
+          '/api/battle/upgrade': () => game.battles.upgrade(body.token,body.battleId,body.chainId,body.targetId,body.attempt,body.lucky,body.fast),
         };
         if (!Object.hasOwn(handlers, url.pathname)) throw new GameError('Маршрут не найден.', 'NOT_FOUND', 404);
+        const retiredId=url.pathname==='/api/reset'?(await run(()=>game.resume(body.token))).player.id:null;
         const payload = await run(handlers[url.pathname]);
+        if(payload.battle)await publish(payload.battle).catch(()=>console.error('Battle broadcast delayed; retrying on the next tick.'));
+        if(retiredId&&community)await community.retire(retiredId).catch(()=>console.error('Presence cleanup delayed.'));
         if (url.pathname === '/api/upgrade'||url.pathname === '/api/battle/upgrade') liveDrops.publish(payload);
         return sendJSON(response, 200, payload);
       }
@@ -123,8 +147,8 @@ export function createApplication({ game, publicDir = path.join(DIRECTORY, 'publ
   server.headersTimeout = 10_000;
   server.on('close', () => liveDrops.close());
   let ticking=false;
-  const timer=setInterval(async()=>{if(ticking)return;ticking=true;try{await run(()=>{});}catch{console.error('Battle timer could not reach storage.');}finally{ticking=false;}},5000);
-  timer.unref();server.on('close',()=>clearInterval(timer));
+  const timer=setInterval(async()=>{if(ticking)return;ticking=true;try{const battles=await run(()=>community?game.battles.recent():[]);for(const battle of battles)await publish(battle);}catch{console.error('Battle timer or broadcast temporarily unavailable.');}finally{ticking=false;}},5000);
+  timer.unref();server.on('close',()=>{clearInterval(timer);community?.close();});
   return server;
 }
 
@@ -135,7 +159,12 @@ export async function startServer() {
   if(process.env.NODE_ENV==='production'&&!process.env.DATABASE_URL)throw new Error('DATABASE_URL is required for profiles and battles.');
   const store=process.env.DATABASE_URL ? await createPostgresStore(game,process.env.DATABASE_URL):undefined;
   if(store)await store.run(()=>game.battles.tick());
-  const server = createApplication({ game, store, trustProxy: process.env.RENDER === 'true' || process.env.TRUST_PROXY === 'true' });
+  let community;
+  if(process.env.FIREBASE_SERVICE_ACCOUNT){
+    const database=createFirebase({url:process.env.FIREBASE_DATABASE_URL||'https://upgrader-c809b-default-rtdb.firebaseio.com/',serviceAccount:process.env.FIREBASE_SERVICE_ACCOUNT});
+    await database.secure();community=await createCommunity({database});
+  }
+  const server = createApplication({ game, store, community, trustProxy: process.env.RENDER === 'true' || process.env.TRUST_PROXY === 'true' });
   if(store)server.on('close',()=>store.close().catch(()=>{}));
   const port = Number(process.env.PORT || 3000);
   server.listen(port, '0.0.0.0', () => console.log(`Upgrade is ready on http://localhost:${port}`));

@@ -1,6 +1,7 @@
 import { createSocial } from './social.js';
+import { createCommunityUI } from './community.js';
 const $ = (id) => document.getElementById(id);
-let social=null;
+let social=null,communityUi=null;
 const SESSION_KEY = 'upgrade.session.v1';
 const PREFS_KEY = 'upgrade.preferences.v1';
 const money = (n) => `${new Intl.NumberFormat('ru-RU').format(n)} ₽`;
@@ -11,13 +12,13 @@ let player = null, token = null, source = null, target = null, mode = 'shop';
 let busy = false, shopPage = 1, targetPage = 1, rotation = 180;
 let shopSequence = 0, targetSequence = 0, selectionSequence = 0, toastTimer, audioContext;
 const DEFAULT_MULTIPLIERS = [1.5,2,5,10];
-const MAX_UPGRADE_CHANCE = 90, MIN_SAVED_MULTIPLIER = 1.12;
+const MAX_UPGRADE_CHANCE = 75, MIN_SAVED_MULTIPLIER = 1.34;
 const minimumTargetPrice = (price) => Math.ceil(Math.round(price*100)*100/MAX_UPGRADE_CHANCE)/100;
 const chanceTooHigh = (from,to) => Math.round(from.price*100)*100 > Math.round(to.price*100)*MAX_UPGRADE_CHANCE;
 function chanceLimitMessage() {
   return source && minimumTargetPrice(source.price)>goal.price
-    ? 'Для апгрейда с шансом до 90% нужен скин не дороже 450 000 ₽. Продайте этот скин и купите более дешёвый.'
-    : `Максимальный шанс — 90%. ${source ? `Выберите цель от ${money(minimumTargetPrice(source.price))}.`:'Выберите более дорогую цель.'}`;
+    ? 'Для апгрейда с шансом до 75% нужен скин не дороже 375 000 ₽. Продайте этот скин и купите более дешёвый.'
+    : `Максимальный шанс — 75%. ${source ? `Выберите цель от ${money(minimumTargetPrice(source.price))}.`:'Выберите более дорогую цель.'}`;
 }
 const ZONE_ANIMATIONS = {
   smooth:{label:'Плавная',duration:500,ease:(t)=>t*t*(3-2*t)},
@@ -265,6 +266,7 @@ function renderMultiplierButtons() {
 }
 function renderPlayer() {
   social?.start();
+  communityUi?.identify();
   $('nickname').textContent = player?.nickname || 'Новая сессия';
   $('balance').textContent = money(player?.balance || 0);
   $('inventoryCount').textContent = player?.inventory.length || 0;
@@ -430,7 +432,7 @@ function selectTarget(id) {
 }
 async function pickMultiplier(multiplier,notify=true) {
   if(!Number.isFinite(multiplier)||multiplier<=1) return;
-  if(multiplier<100/MAX_UPGRADE_CHANCE){toast('Максимальный шанс — 90%. Увеличьте множитель.');return;}
+  if(multiplier<100/MAX_UPGRADE_CHANCE){toast('Максимальный шанс — 75%. Увеличьте множитель.');return;}
   if(source && minimumTargetPrice(source.price)>goal.price){target=null;renderSelection();if(notify)toast(chanceLimitMessage());return;}
   activeMultiplier=multiplier;
   if(!source) {renderMultiplierButtons();if(notify)toast('Множитель выбран. Теперь выберите свой скин слева.');return;}
@@ -461,7 +463,7 @@ function randomSpinMotion(fast) {
   const style=SPIN_STYLES[styleIndex];
   const between=([min,max])=>min+(max-min)*Math.random();
   return {
-    duration:Math.round(between(fast?[1800,2600]:[6200,8200])),
+    duration:Math.round(between(fast?[1800,2600]:[6200,8200])/(fast?1.5:2)),
     turns:fast ? 2+Math.floor(Math.random()*2):4+Math.floor(Math.random()*3),
     accelerate:between(style.accelerate),cruise:between(style.cruise),bend:between(style.bend),
   };
@@ -594,7 +596,7 @@ $('restoreMultipliers').addEventListener('click',()=>{DEFAULT_MULTIPLIERS.forEac
 $('multiplierForm').addEventListener('submit',async(event)=>{
   event.preventDefault();if(busy)return;
   const values=DEFAULT_MULTIPLIERS.map((_,i)=>Number($(`multiplier${i}`).value));
-  if(values.some((value)=>!Number.isFinite(value)||value<MIN_SAVED_MULTIPLIER||value>50000||Math.abs(value*100-Math.round(value*100))>1e-7)){$('multiplierError').textContent='Введите значения от 1,12 до 50 000, не более двух знаков после запятой. Максимальный шанс — 90%.';return;}
+  if(values.some((value)=>!Number.isFinite(value)||value<MIN_SAVED_MULTIPLIER||value>50000||Math.abs(value*100-Math.round(value*100))>1e-7)){$('multiplierError').textContent='Введите значения от 1,34 до 50 000, не более двух знаков после запятой. Максимальный шанс — 75%.';return;}
   const activeIndex=prefs.multipliers.indexOf(activeMultiplier);
   prefs.multipliers=values;savePreferences();$('multiplierDialog').close();
   if(activeIndex>=0)await pickMultiplier(values[activeIndex],false);
@@ -606,7 +608,7 @@ $('luckyToggle').addEventListener('click',()=>{
 });
 $('findChanceButton')?.addEventListener('click',()=>{
   const chance=Number($('desiredChanceInput').value);
-  if(!Number.isFinite(chance)||chance<=0||chance>MAX_UPGRADE_CHANCE){toast('Введите шанс больше 0 и не выше 90%.');return;}
+  if(!Number.isFinite(chance)||chance<=0||chance>MAX_UPGRADE_CHANCE){toast('Введите шанс больше 0 и не выше 75%.');return;}
   if(!busy)pickMultiplier(100/chance);
 });
 function renderPreferences() {
@@ -655,7 +657,8 @@ window.addEventListener('storage',async(event)=>{
 });
 social=createSocial({$,document,window,getPlayer:()=>player,getToken:()=>token,isBusy:()=>busy,
   setBusy:(value)=>{busy=value;liveFeedPaused=value;renderPlayer();if(!value){renderLiveDrops();flushOtherTab();}},
-  saveSnapshot,api,toast,showDialog,esc,money,primeAudio,spinTick,sound,initialView:location.hash});
+  saveSnapshot,api,toast,showDialog,esc,money,primeAudio,spinTick,sound,initialView:location.hash,getFast:()=>prefs.fast,isOnline:(id)=>communityUi?.isOnline(id)||false,onProfile:(id)=>communityUi?.updateProfile(id)});
+communityUi=createCommunityUI({$,document,window,getPlayer:()=>player,getToken:()=>token,api,toast,esc,money,showDialog,getPrefs:()=>prefs,savePreferences,social:()=>social,isBusy:()=>busy});
 async function init() {
   connectLiveDrops();
   $('targetSort').value='desc';
@@ -671,5 +674,6 @@ async function init() {
   $('shopMax').value='';
   renderPlayer();switchMode(mode);await loadTargets();
   social.init();
+  communityUi.start();
 }
 init();

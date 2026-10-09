@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import { createCipheriv, createHash, randomBytes } from 'node:crypto';
+import { createCipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createGame, GameError } from '../lib/game.mjs';
 
@@ -10,7 +10,8 @@ import { createGame, GameError } from '../lib/game.mjs';
 const appSource = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
 const pageSource = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
 const socialSource=await readFile(new URL('../public/social.js',import.meta.url),'utf8');
-const appWithoutStartup = socialSource.replace('export function createSocial','function createSocial')+'\n'+appSource.replace(/^import .*;\r?\n/m,'').replace(/\binit\(\);\s*$/, '');
+const communitySource=await readFile(new URL('../public/community.js',import.meta.url),'utf8');
+const appWithoutStartup = communitySource.replace('export function createCommunityUI','function createCommunityUI')+'\n'+socialSource.replace('export function createSocial','function createSocial')+'\n'+appSource.replace(/^import .*;\r?\n/gm,'').replace(/\binit\(\);\s*$/, '');
 const SESSION_KEY = 'upgrade.session.v1';
 const PREFS_KEY = 'upgrade.preferences.v1';
 const TEST_SECRET = 'frontend-test-secret-01234567890123456789';
@@ -39,7 +40,9 @@ function harness({ random = () => 0.5, engine, savedToken, preferences, intercep
   function element(id = '') {
     const listeners = new Map(), attributes = new Map();
     const node = {
-      id, value: '', innerHTML: '', disabled: false, hidden: false, open: false, dataset: {}, classList: classes(), listeners,
+      id, value: '', disabled: false, hidden: false, open: false, dataset: {}, classList: classes(), listeners,
+      style:{setProperty(key,value){this[key]=value;}},
+      get innerHTML(){return this.html||'';},set innerHTML(value){this.html=value;for(const match of value.matchAll(/\bid="([^"]+)"/g))if(!elements.has(match[1]))elements.set(match[1],element(match[1]));},
       get textContent() { return this.text || ''; }, set textContent(value) { this.text = String(value); },
       addEventListener(type, listener) { if (!listeners.has(type)) listeners.set(type, []); listeners.get(type).push(listener); },
       setAttribute(name, value) { attributes.set(name, String(value)); }, getAttribute(name) { return attributes.get(name) ?? null; },
@@ -90,11 +93,16 @@ function harness({ random = () => 0.5, engine, savedToken, preferences, intercep
       else if (path === '/api/upgrade') result = engine.upgrade(body.token, body.inventoryId, body.targetId, { lucky: body.lucky });
       else if (path === '/api/reset') result = engine.reset(body.token);
       else if (path === '/api/profile') result=engine.profile(request.query.id,request.query.page);
+      else if (path === '/api/presence') result={serverNow:Date.now(),style:null};
+      else if (path === '/api/wheel-style') result={style:body.style};
+      else if (path === '/api/chat') result={message:{id:body.requestId,text:body.text}};
+      else if (path === '/api/challenge') result=engine.battles.create(body.token,body.amount,body.count,body.playerId);
       else if (path === '/api/battles') result=engine.battles.list();
       else if (path === '/api/battle/state') result=engine.battles.state(body.token,body.battleId);
       else if (path === '/api/battle/create') result=engine.battles.create(body.token,body.amount,body.count);
       else if (path === '/api/battle/join') result=engine.battles.join(body.token,body.battleId);
       else if (path === '/api/battle/cancel') result=engine.battles.cancel(body.token,body.battleId);
+      else if (path === '/api/battle/decline') result=engine.battles.decline(body.token,body.battleId);
       else if (path === '/api/battle/stop') result=engine.battles.stop(body.token,body.battleId);
       else if (path === '/api/battle/upgrade') result=engine.battles.upgrade(body.token,body.battleId,body.chainId,body.targetId,body.attempt,body.lucky);
       else throw new Error(`Unexpected route: ${path}`);
@@ -105,7 +113,7 @@ function harness({ random = () => 0.5, engine, savedToken, preferences, intercep
     }
   }
   const context = vm.createContext({
-    document, window, fetch: fetchDouble, URLSearchParams, Intl, console, EventSource,
+    document, window, fetch: fetchDouble, URLSearchParams, Intl, console, EventSource,crypto:{randomUUID},
     Math:Object.assign(Object.create(Math),{random:animationRandom}),
     localStorage: { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value)), removeItem: (key) => storage.delete(key) },
     location: { reload() { reloads++; } }, navigator: { clipboard: { writeText: async () => {} } },
@@ -174,6 +182,48 @@ test('LIVE drop opens the correct public profile, including battle history and t
   assert.ok(!h.element('profileContent').innerHTML.includes('1234567890'));
 });
 
+test('community renders genuine online players, escapes chat text and sends through the authenticated API',async()=>{
+  const h=harness();h.install(h.engine.start('Alice'));h.evaluate('communityUi.start()');await settled();
+  const stream=h.streams.find((s)=>s.url==='/api/community/stream');assert.ok(stream);
+  stream.emit('community',{serverNow:Date.now(),online:[{id:'bob',nickname:'<Bob>'},{id:h.plain('player.id'),nickname:'Alice'}],messages:[{id:'message-1',playerId:'bob',nickname:'<Bob>',text:'<img src=x onerror=alert(1)>',at:Date.now()}],battles:[]});
+  assert.equal(h.element('onlineCount').textContent,'2');assert.match(h.element('chatMessages').innerHTML,/&lt;img/);assert.ok(!h.element('chatMessages').innerHTML.includes('<img'));
+  h.element('chatDrawer').hidden=true;await h.dispatch('chatToggle','click');assert.equal(h.element('chatDrawer').hidden,false);
+  h.element('chatInput').value='Hello';await h.dispatch('chatForm','submit');const sent=h.requests.find((r)=>r.path==='/api/chat');assert.equal(sent.body.text,'Hello');assert.equal(sent.body.token,h.storage.get(SESSION_KEY));
+  await h.dispatch('chatClose','click');assert.equal(h.element('chatDrawer').hidden,true);
+});
+
+test('wheel colors validate restored preferences, apply live and persist through Firebase route',async()=>{
+  const h=harness({preferences:{wheelStyle:{start:'bad'}}});h.install(h.engine.start('Alice'));
+  assert.equal(h.plain('prefs.wheelStyle.start'),'#ffdc00');
+  await h.dispatch('wheelColorsButton','click');assert.equal(h.element('wheelColorsDialog').open,true);
+  h.element('color-start').value='#12ab34';await h.dispatch('color-start','input');assert.equal(h.plain('prefs.wheelStyle.start'),'#12ab34');
+  h.element('color-center').value='#123456';await h.dispatch('color-center','input');
+  await h.dispatch('wheelColorsForm','submit');assert.equal(h.requests.find((r)=>r.path==='/api/wheel-style').body.style.center,'#123456');
+  assert.equal(JSON.parse(h.storage.get(PREFS_KEY)).wheelStyle.start,'#12ab34');assert.equal(h.element('wheelColorsDialog').open,false);
+});
+
+test('chat and profile challenge controls only offer online opponents and create a reserved battle',async()=>{
+  const h=harness();h.install(h.engine.start('Alice'));const bob=h.engine.start('Bob');h.evaluate('communityUi.start()');await settled();
+  h.streams.find((s)=>s.url==='/api/community/stream').emit('community',{serverNow:Date.now(),online:[{id:bob.player.id,nickname:'Bob'}],messages:[],battles:[]});
+  await h.clickDataset({action:'challenge',key:'offline'});assert.equal(h.element('challengeDialog').open,false);
+  await h.clickDataset({action:'profile',key:bob.player.id});assert.equal(h.element('profileChallenge').disabled,false);
+  await h.clickDataset({action:'challenge',key:bob.player.id});assert.equal(h.element('challengeDialog').open,true);assert.equal(h.element('profileDialog').open,false);
+  h.element('challengeAmount').value='100';h.element('challengeChains').value='2';await h.dispatch('challengeForm','submit');
+  assert.equal(h.plain('player.balance'),400);assert.equal(h.engine.battles.list().battles[0].targetPlayerId,bob.player.id);
+});
+
+test('spectators animate both players from the shared server timestamps and land on each actual result',async()=>{
+  const h=harness();h.install(h.engine.start('Viewer'));const alice=h.engine.start('Alice'),bob=h.engine.start('Bob');
+  const created=h.engine.battles.create(alice.token,100,2);h.engine.battles.join(bob.token,created.battle.id);
+  const state=h.engine.battles.state(alice.token,created.battle.id);
+  h.engine.battles.upgrade(created.token,created.battle.id,state.battle.players[0].chains[0].id,'skin-100',0,false);
+  h.engine.battles.upgrade(bob.token,created.battle.id,state.battle.players[1].chains[0].id,'skin-100',0,false);
+  await h.clickDataset({action:'battle-view',key:created.battle.id});h.evaluate("social.open('battles')");await settled();
+  const ids=[alice.player.id,bob.player.id],before=ids.map((id)=>h.element(`watchPointer-${id}`).getAttribute('transform'));
+  h.frame(250);ids.forEach((id,index)=>assert.notEqual(h.element(`watchPointer-${id}`).getAttribute('transform'),before[index]));
+  await h.finishAnimation();ids.forEach((id)=>{assert.match(h.element(`watchStatus-${id}`).textContent,/Успешный/);const angle=Number(h.element(`watchPointer-${id}`).getAttribute('transform').match(/rotate\(([\d.]+)/)[1]);assert.equal(angle%360,180);});
+});
+
 test('battle interface creates equal chains, upgrades, stops and updates the winner balance',async()=>{
   const h=harness({reducedMotion:true});h.install(h.engine.start('Alice'));
   h.element('battleDeposit').value='100';h.element('battleChains').value='2';h.element('battleChance').value='50';
@@ -186,9 +236,9 @@ test('battle interface creates equal chains, upgrades, stops and updates the win
   await h.evaluate('social.refresh()');await settled();
   assert.equal(h.element('battleControls').hidden,false);
   assert.equal(h.element('battleUpgradeButton').disabled,false);
-  await h.clickDataset({action:'battle-chance',key:'90'});
+  await h.clickDataset({action:'battle-chance',key:'75'});
   const chance=Number(h.element('battleChanceValue').textContent.replace('%','').replace(',','.'));
-  assert.ok(chance<=90&&chance>89);
+  assert.ok(chance<=75&&chance>74);
   await h.clickDataset({action:'battle-chance',key:'50'});
   const spin=h.dispatch('battleUpgradeButton','click');await h.finishAnimation();await spin;
   assert.match(h.element('battleSpinStatus').textContent,/Успех/);
@@ -266,8 +316,8 @@ test('live feed preserves history on connection errors and releases its connecti
   assert.equal(h.element('liveFeedStatus').textContent,'Переподключаемся…');
   assert.equal(h.element('liveFeedDot').classList.contains('connected'),false);
   h.windowEvent('pagehide');assert.equal(stream.closed,true);
-  h.windowEvent('pageshow');assert.equal(h.streams.length,2);
-  h.streams[1].emit('snapshot',[feedDrop('missed'),feedDrop()]);
+  h.windowEvent('pageshow');assert.equal(h.streams.filter((s)=>s.url==='/api/live-drops/stream').length,2);
+  h.streams.findLast((s)=>s.url==='/api/live-drops/stream').emit('snapshot',[feedDrop('missed'),feedDrop()]);
   assert.equal(h.plain('liveDrops').length,2);
 });
 
@@ -335,7 +385,7 @@ test('custom multiplier buttons keep delegated clicks after rerender and ignore 
   assert.ok(h.presets.every((button) => button.disabled));
   h.evaluate('busy=false'); h.element('multiplier0').value = '1';
   await h.dispatch('multiplierForm', 'submit');
-  assert.match(h.element('multiplierError').textContent, /1,12/);
+  assert.match(h.element('multiplierError').textContent, /1,34/);
   assert.equal(h.plain('prefs.multipliers')[0], 1.5);
 });
 
@@ -363,53 +413,53 @@ test('777 refuses a base chance below 50% even when displayed chance rounds to 5
   assert.equal(h.requests.filter((r) => r.path === '/api/upgrade').length, 0);
 });
 
-test('custom chance accepts 90, rejects values above it and rounds target cents safely',async()=>{
-  const h=harness();h.seed(90,200);
-  for(const chance of [90.01,95,100]) {
+test('custom chance accepts 75, rejects values above it and rounds target cents safely',async()=>{
+  const h=harness();h.seed(75,200);
+  for(const chance of [75.01,95,100]) {
     h.element('desiredChanceInput').value=String(chance);
     const count=h.requests.length;
     await h.dispatch('findChanceButton','click');
-    assert.equal(h.requests.length,count);assert.match(h.element('toast').textContent,/90%/);
+    assert.equal(h.requests.length,count);assert.match(h.element('toast').textContent,/75%/);
   }
-  h.element('desiredChanceInput').value='90';await h.dispatch('findChanceButton','click');
-  assert.equal(h.evaluate('target.price'),100);assert.equal(h.element('chanceValue').textContent,'90%');
+  h.element('desiredChanceInput').value='75';await h.dispatch('findChanceButton','click');
+  assert.equal(h.evaluate('target.price'),100);assert.equal(h.element('chanceValue').textContent,'75%');
   assert.equal(h.element('upgradeButton').disabled,false);
-  for(const price of [10,10.01,100,449999.99,450000]) {
-    const target=h.evaluate(`multiplierPrice(${price},100/90)`);
-    assert.ok(Math.round(price*100)*100<=Math.round(target*100)*90,'cent rounding must not allow an excess');
+  for(const price of [10,10.01,100,374999.99,375000]) {
+    const target=h.evaluate(`multiplierPrice(${price},100/75)`);
+    assert.ok(Math.round(price*100)*100<=Math.round(target*100)*75,'cent rounding must not allow an excess');
   }
-  assert.equal(h.evaluate('multiplierPrice(100,100/90)'),111.12);
+  assert.equal(h.evaluate('multiplierPrice(100,100/75)'),133.34);
 });
 
-test('manual target selection, direct upgrade and the goal price cap cannot bypass 90 percent',async()=>{
-  const h=harness();h.seed(90.01,200);
+test('manual target selection, direct upgrade and the goal price cap cannot bypass 75 percent',async()=>{
+  const h=harness();h.seed(75.01,200);
   h.evaluate('cache.set("skin-100",{...target,id:"skin-100",price:100});selectTarget("skin-100")');
-  assert.equal(h.evaluate('target.price'),200);assert.match(h.element('toast').textContent,/90%/);
+  assert.equal(h.evaluate('target.price'),200);assert.match(h.element('toast').textContent,/75%/);
   h.evaluate('target=cache.get("skin-100");renderSelection()');
   assert.equal(h.element('upgradeButton').disabled,true);
   assert.equal(h.element('chanceValue').textContent,'—');
-  assert.match(h.element('statusLine').textContent,/90%/);
+  assert.match(h.element('statusLine').textContent,/75%/);
   await h.evaluate('upgrade()');assert.equal(h.requests.length,0);
   const initial=h.seed(100,200);
-  const expensive=h.engine.upgrade(initial.token,initial.player.inventory[0].inventoryId,'skin-450000.01');
+  const expensive=h.engine.upgrade(initial.token,initial.player.inventory[0].inventoryId,'skin-375000.01');
   h.install(expensive,500000);
   assert.equal(h.element('upgradeButton').disabled,true);
   assert.ok(h.presets.every((button)=>button.disabled));
-  assert.match(h.element('statusLine').textContent,/450 000/);
+  assert.match(h.element('statusLine').textContent,/375 000/);
   await h.evaluate('pickMultiplier(2)');assert.equal(h.evaluate('target'),null);
   await h.evaluate('upgrade()');assert.equal(h.requests.length,0);
 });
 
-test('saved and edited multipliers enforce the 90 percent limit while preserving other preferences',async()=>{
-  const h=harness({preferences:{multipliers:[1.01,1.11,1.12,4],sound:false}});
-  assert.deepEqual(h.plain('prefs.multipliers'),[1.5,2,1.12,4]);
+test('saved and edited multipliers enforce the 75 percent limit while preserving other preferences',async()=>{
+  const h=harness({preferences:{multipliers:[1.01,1.33,1.34,4],sound:false}});
+  assert.deepEqual(h.plain('prefs.multipliers'),[1.5,2,1.34,4]);
   assert.equal(h.evaluate('prefs.sound'),false);
-  await h.dispatch('multiplierSettings','click');h.element('multiplier0').value='1.11';
+  await h.dispatch('multiplierSettings','click');h.element('multiplier0').value='1.33';
   await h.dispatch('multiplierForm','submit');
-  assert.match(h.element('multiplierError').textContent,/90%/);
+  assert.match(h.element('multiplierError').textContent,/75%/);
   assert.equal(h.plain('prefs.multipliers')[0],1.5);
-  h.seed();await h.evaluate('pickMultiplier(1.11)');
-  assert.equal(h.requests.length,0);assert.match(h.element('toast').textContent,/90%/);
+  h.seed();await h.evaluate('pickMultiplier(1.33)');
+  assert.equal(h.requests.length,0);assert.match(h.element('toast').textContent,/75%/);
 });
 
 test('777 sends its flag, wins at exactly 50%, and restores the authoritative remaining count', async () => {
@@ -624,10 +674,10 @@ test('rapid sector retargeting starts at the visible position and keeps only one
 
 test('repeated renders do not restart a sector animation and a spin settles the exact zone before sending its request',async()=>{
   const gate=deferred();const h=harness({intercept:(request)=>request.path==='/api/upgrade'?gate.promise:undefined});
-  h.seed(100,125);h.frame(200);
+  h.seed(75,100);h.frame(200);
   for(let i=0;i<10;i++)h.evaluate('renderSelection()');
-  h.frame(300);assert.equal(h.evaluate('winSector.value'),80);assert.equal(h.pendingFrames,0);
-  h.evaluate('target={...target,id:"skin-400",price:400};renderSelection()');h.frame(40);
+  h.frame(300);assert.equal(h.evaluate('winSector.value'),75);assert.equal(h.pendingFrames,0);
+  h.evaluate('target={...target,id:"skin-300",price:300};renderSelection()');h.frame(40);
   assert.ok(h.evaluate('winSector.value')>25);
   const spin=h.evaluate('upgrade()');
   assert.equal(h.evaluate('winSector.value'),25);assert.equal(h.evaluate('winSector.running'),false);
@@ -666,7 +716,7 @@ test('normal pointer spin starts gently, retains a long braking phase and lands 
   const h=harness();h.evaluate('prefs.sound=false');
   const start=h.evaluate('rotation');const spin=h.evaluate('animatePointer(267.25)');
   const samples=[start];
-  for(let i=0;h.pendingFrames && i<90;i++){h.frame(100);samples.push(h.evaluate('rotation'));}
+  for(let i=0;h.pendingFrames && i<90;i++){h.frame(50);samples.push(h.evaluate('rotation'));}
   assert.equal(h.pendingFrames,0);
   await spin;
   const steps=samples.slice(1).map((value,i)=>value-samples[i]);
@@ -674,7 +724,7 @@ test('normal pointer spin starts gently, retains a long braking phase and lands 
   assert.ok(steps[0]<steps[3]/5,'gentle takeoff instead of an immediate maximum speed');
   assert.ok(steps.length>=62 && steps.length<=82);
   for(let i=Math.ceil(steps.length*.28)+1;i<steps.length;i++)assert.ok(steps[i]<=steps[i-1]+1e-8,'speed decreases throughout the long braking phase');
-  assert.ok(samples.at(-1)-samples[36]>200,'substantial visible movement remains after the old 3.6-second stop');
+  assert.ok(samples.at(-1)-samples[36]>200,'substantial visible movement remains after the halfway point');
   assert.ok(samples.at(-1)-samples.at(-11)>5,'the last second still has a visible slow approach');
   assert.ok(steps.at(-1)<.2,'last frame reaches the result without a visible snap');
   assert.equal(((h.evaluate('rotation')%360)+360)%360,267.25);
@@ -698,7 +748,7 @@ test('fast pointer mode retains an extended slowing finish and reduced motion sk
   const h=harness({preferences:{fast:true,sound:false}});
   const spin=h.evaluate('animatePointer(90)');h.frame(550);
   assert.equal(h.pendingFrames,1,'fast spin no longer ends at 550ms');
-  h.frame(1050);const approaching=h.evaluate('rotation');
+  h.frame(500);const approaching=h.evaluate('rotation');
   assert.equal(h.pendingFrames,1);h.frame(1000);await spin;
   assert.ok(h.evaluate('rotation')>approaching);assert.equal(h.evaluate('rotation')%360,90);
   const reduced=harness({reducedMotion:true});
@@ -726,9 +776,9 @@ test('all random motion boundaries are smooth and bounded, and random duration a
     const h=harness({preferences:{fast,sound:false},animationRandom:()=>draw});
     for(let variant=0;variant<3;variant++) {
       const motion=h.plain(`randomSpinMotion(${fast})`);
-      assert.ok(motion.duration>=(fast?1800:6200) && motion.duration<=(fast?2600:8200));
+      assert.ok(motion.duration>=(fast?1200:3100) && motion.duration<=(fast?1733:4100));
       assert.ok(motion.turns>=(fast?2:4) && motion.turns<=(fast?3:6));
-      assert.ok((1-motion.accelerate-motion.cruise)*motion.duration>=(fast?1300:4500),'long braking remains');
+      assert.ok((1-motion.accelerate-motion.cruise)*motion.duration>=(fast?850:2200),'long braking remains');
       h.context.motionFixture=motion;
       let previous=0;
       for(let sample=0;sample<=500;sample++) {

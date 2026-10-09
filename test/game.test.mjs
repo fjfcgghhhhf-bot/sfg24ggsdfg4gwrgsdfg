@@ -371,24 +371,24 @@ test('invalid upgrade is atomic and does not consume an item', () => {
   assert.deepEqual(engine.resume(session.token), session);
 });
 
-test('90 percent is inclusive and even a fractional excess is rejected atomically, including 777', () => {
+test('75 percent is inclusive and even a fractional excess is rejected atomically, including 777', () => {
   for (const lucky of [false,true]) {
     let draws=0;
     const engine=game({random:()=>{draws++;return .5;}});
-    for (const price of [90.01,99.99]) {
+    for (const price of [75.01,99.99]) {
       let session=engine.start('Лимит');session=engine.buy(session.token,`skin-${price}`);
       assert.throws(()=>engine.upgrade(session.token,session.player.inventory[0].inventoryId,'skin-100',{lucky}),isError('CHANCE_TOO_HIGH'));
       assert.deepEqual(engine.resume(session.token),session,'no balance, revision, inventory or booster changes');
     }
     assert.equal(draws,0,'invalid chance never draws a result');
-    let boundary=engine.start('Ровно 90');boundary=engine.buy(boundary.token,'skin-90');
+    let boundary=engine.start('Ровно 75');boundary=engine.buy(boundary.token,'skin-75');
     boundary=engine.upgrade(boundary.token,boundary.player.inventory[0].inventoryId,'skin-100',{lucky});
-    assert.equal(boundary.result.chance,90);assert.equal(boundary.result.won,true);
+    assert.equal(boundary.result.chance,75);assert.equal(boundary.result.won,true);
     assert.equal(boundary.player.boosters.luckyRemaining,lucky ? 2:3);
-    for (const price of [450000,450000.01]) {
+    for (const price of [375000,375000.01]) {
       let session=engine.start('Цель');session=engine.buy(session.token,'skin-100');
       session=engine.upgrade(session.token,session.player.inventory[0].inventoryId,`skin-${price}`);
-      if(price===450000)assert.equal(engine.upgrade(session.token,session.player.inventory[0].inventoryId,'code',{lucky}).result.chance,90);
+      if(price===375000)assert.equal(engine.upgrade(session.token,session.player.inventory[0].inventoryId,'code',{lucky}).result.chance,75);
       else {
         assert.throws(()=>engine.upgrade(session.token,session.player.inventory[0].inventoryId,'code',{lucky}),isError('CHANCE_TOO_HIGH'));
         assert.deepEqual(engine.resume(session.token),{token:session.token,player:session.player});
