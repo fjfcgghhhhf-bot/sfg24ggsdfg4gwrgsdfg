@@ -75,6 +75,7 @@ test('Firebase REST signs server authentication and retries conflicting conditio
 });
 test('real Firebase stores and streams messages, presence and colors in an isolated test namespace',{skip:!process.env.FIREBASE_SERVICE_ACCOUNT,timeout:45000},async()=>{
   const database=createFirebase({url:process.env.FIREBASE_DATABASE_URL||'https://upgrader-c809b-default-rtdb.firebaseio.com/',serviceAccount:process.env.FIREBASE_SERVICE_ACCOUNT}),root=`upgrade/tests/${randomUUID()}`;
+  await database.readRules();
   const community=await createCommunity({database,root}),alice={id:'alice',nickname:'Firebase test'};
   let unsubscribe,deadline;
   const received=new Promise((resolve,reject)=>{
@@ -109,7 +110,7 @@ test('Firebase locks public access when exported rules contain comments',async()
   const client=createFirebase({url:'https://unit-test.firebaseio.com/',serviceAccount:{client_email:'test@unit.iam.gserviceaccount.com',private_key:privateKey.export({type:'pkcs8',format:'pem'})},fetchImpl:async(url,options)=>{
     if(String(url).includes('oauth2'))return Response.json({access_token:'test-token',expires_in:3600});
     assert.ok(String(url).endsWith('/.settings/rules.json'));
-    if(options.method==='GET')return new Response('{"rules": {\n ".read": true, // default expiry\n /* Firebase comment */ ".write": true,"other":{".validate":"newData.val() === \\\"https://example.com/*safe*/\\\""}}}');
+    if(options.method==='GET')return new Response('{"rules": {\n ".read": true, // default expiry\n /* Firebase comment */ ".write": true,"other":{".validate":"newData.val() === \\\"https://example.com/*safe*/\\\"",},\n },}');
     saved=JSON.parse(options.body);return Response.json(saved);
   }});
   await client.secure();assert.equal(saved.rules['.read'],false);assert.equal(saved.rules['.write'],false);assert.deepEqual(saved.rules.upgrade,{'.read':false,'.write':false});assert.match(saved.rules.other['.validate'],/https:\/\/example.com\/\*safe\*\//);client.close();
