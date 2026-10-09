@@ -148,9 +148,9 @@ export function createSocial({$,document,window,getPlayer,getToken,isBusy,setBus
     }catch(error){notice(error.message);toast(error.message);}
     finally{pending=false;setBusy(false);renderBattle();await refresh();}
   }
-  async function animate(angle,duration) {
+  async function animate(angle,duration,turns=1) {
     const reduced=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const start=180,end=start+360*3+((angle-180+360)%360),began=performance.now();
+    const start=180,end=start+360*turns+((angle-180+360)%360),began=performance.now();
     let lastSector=Math.floor(rotation/24),lastTick=-100;
     return new Promise((resolve)=>{function frame(now){const t=reduced?1:Math.min(1,(now-began)/duration),progress=1-Math.pow(1-t,3);rotation=t===1?end:start+(end-start)*progress;$('battlePointer').setAttribute('transform',`rotate(${rotation} 200 200)`);const sector=Math.floor(rotation/24);if(t<1&&sector!==lastSector&&now-lastTick>35){spinTick();lastTick=now;lastSector=sector;}if(t<1)requestAnimationFrame(frame);else resolve();}requestAnimationFrame(frame);});
   }
@@ -161,7 +161,7 @@ export function createSocial({$,document,window,getPlayer,getToken,isBusy,setBus
     let message='';
     try {
       const data=await api('battle/upgrade',{token:getToken(),battleId:battle.id,chainId:selected.id,targetId:chosenTarget.id,attempt:selected.attempts,lucky:false,fast:getFast()});
-      saveSnapshot(data,false);await animate(data.result.angle,data.spinDuration);sound(data.result.won);
+      saveSnapshot(data,false);await animate(data.result.angle,data.spinDuration,data.spinTurns);sound(data.result.won);
       message=data.result.won?`Успех! ${data.result.item.name} · ${money(data.result.item.price)}`:'Скин потерян. Выберите другую цепочку.';
       target=null;apply(data);
     }catch(error){message=error.message;toast(error.message);}

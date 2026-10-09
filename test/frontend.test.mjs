@@ -568,6 +568,7 @@ test('cart keeps quantities across catalog pages and checkout buys once without 
   assert.equal(h.evaluate('target.price'),200);
   assert.equal(h.evaluate('player.balance'),360);
   assert.equal(h.plain('player.inventory').length,4);
+  assert.equal(h.element('inventoryWorth').textContent,'140 ₽');
   assert.equal(h.element('cartCount').textContent,'0');
   assert.equal(h.element('cartDialog').open,false);
   const restored=h.engine.resume(h.storage.get(SESSION_KEY));
@@ -724,8 +725,8 @@ test('normal pointer spin starts gently, retains a long braking phase and lands 
   assert.ok(steps[0]<steps[3]/5,'gentle takeoff instead of an immediate maximum speed');
   assert.ok(steps.length>=62 && steps.length<=82);
   for(let i=Math.ceil(steps.length*.28)+1;i<steps.length;i++)assert.ok(steps[i]<=steps[i-1]+1e-8,'speed decreases throughout the long braking phase');
-  assert.ok(samples.at(-1)-samples[36]>200,'substantial visible movement remains after the halfway point');
-  assert.ok(samples.at(-1)-samples.at(-11)>5,'the last second still has a visible slow approach');
+  assert.ok(samples.at(-1)-samples[36]>(samples.at(-1)-start)*.1,'substantial visible movement remains after the halfway point');
+  assert.ok(samples.at(-1)-samples.at(-11)>(samples.at(-1)-start)*.002,'the last half-second still has a visible slow approach');
   assert.ok(steps.at(-1)<.2,'last frame reaches the result without a visible snap');
   assert.equal(((h.evaluate('rotation')%360)+360)%360,267.25);
   assert.equal(h.pendingFrames,0);
@@ -777,7 +778,7 @@ test('all random motion boundaries are smooth and bounded, and random duration a
     for(let variant=0;variant<3;variant++) {
       const motion=h.plain(`randomSpinMotion(${fast})`);
       assert.ok(motion.duration>=(fast?1200:3100) && motion.duration<=(fast?1733:4100));
-      assert.ok(motion.turns>=(fast?2:4) && motion.turns<=(fast?3:6));
+      assert.ok(motion.turns>=(fast?1:2) && motion.turns<=(fast?2:3));
       assert.ok((1-motion.accelerate-motion.cruise)*motion.duration>=(fast?850:2200),'long braking remains');
       h.context.motionFixture=motion;
       let previous=0;
@@ -805,4 +806,23 @@ test('motion randomness leaves upgrade outcome and probability unchanged for ide
     assert.equal(h.evaluate('player.wins'),1);assert.equal(h.evaluate('rotation')%360,180);
     assert.equal(h.evaluate('winSector.value'),50);
   }
+});
+
+test('shorter spins reduce travel instead of increasing angular speed, including partial final turns',()=>{
+  for(const fast of [false,true])for(const draw of [0,.5,.999999])for(const landing of [0,1,180,359.999]){
+    const h=harness({animationRandom:()=>draw}),motion=h.plain(`randomSpinMotion(${fast},${landing})`);
+    const originalSpeed=(motion.baseTurns*360+landing)/motion.baseDuration;
+    const newSpeed=(motion.turns*360+landing)/motion.duration;
+    assert.ok(newSpeed<=originalSpeed*1.001,'the same easing curve must not become faster');
+    assert.ok(motion.duration<motion.baseDuration);assert.ok(motion.turns<motion.baseTurns);assert.ok(Number.isInteger(motion.turns)&&motion.turns>=1);
+  }
+});
+
+test('inventory worth totals duplicate cent-priced items and follows sales and restore',async()=>{
+  const h=harness();let state=h.engine.start('Inventory test');
+  state=h.engine.buyCart(state.token,[{itemId:'skin-10.01',quantity:3},{itemId:'skin-20.02',quantity:1}]);
+  h.install(state);assert.equal(h.element('inventoryWorth').textContent,'50,05 ₽');assert.equal(h.element('balance').textContent,'449,95 ₽');
+  await h.clickDataset({action:'sell',key:state.player.inventory[0].inventoryId});assert.equal(h.element('inventoryWorth').textContent,'40,04 ₽');
+  const restored=harness({engine:h.engine,savedToken:h.storage.get(SESSION_KEY)});await restored.evaluate('init()');assert.equal(restored.element('inventoryWorth').textContent,'40,04 ₽');
+  await restored.clickDataset({action:'sell-all'});assert.equal(restored.element('inventoryWorth').textContent,'0 ₽');assert.equal(restored.element('balance').textContent,'500 ₽');
 });

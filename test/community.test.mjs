@@ -44,7 +44,7 @@ test('targeted battles reserve their opponent and expose accurate spin timestamp
   game.battles.decline(b.token,created.battle.id);assert.equal(game.resume(a.token).player.balance,500);
   const next=game.battles.create(game.resume(a.token).token,100,2,b.player.id);game.battles.join(b.token,next.battle.id);
   const spun=game.battles.upgrade(next.token,next.battle.id,next.battle.players[0].chains[0].id,'skin-100',0,false,true);
-  const spin=spun.battle.players[0].lastSpin;assert.equal(spin.angle,180);assert.equal(spin.chance,50);assert.equal(spin.duration,867);
+  const spin=spun.battle.players[0].lastSpin;assert.equal(spin.angle,180);assert.equal(spin.chance,50);assert.equal(spin.duration,867);assert.equal(spin.turns,1);assert.equal(spun.spinTurns,spin.turns);
   const database=memoryDatabase(),community=await createCommunity({database});
   try{await community.publishBattle(spun.battle);await community.publishBattle(next.battle);assert.equal(community.snapshot().battles[0].revision,spun.battle.revision);assert.equal(community.snapshot().battles[0].players[0].lastSpin.id,spin.id);for(const secret of [a.token,b.token,config.goalCode])assert.ok(!JSON.stringify(community.snapshot()).includes(secret));}finally{community.close();}
 });

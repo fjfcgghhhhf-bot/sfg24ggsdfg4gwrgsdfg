@@ -1,4 +1,7 @@
 body{--wheel-start:#ffdc00;--wheel-end:#ef3e25;--wheel-pointer:#ffe100;--wheel-center:#ffdc00}
+.inventory-worth{display:flex;flex-direction:column;align-items:flex-end;gap:3px;padding-right:17px;border-right:1px solid #35353b;white-space:nowrap;font-variant-numeric:tabular-nums}.inventory-worth>span{font-size:10px;color:#92959f}.inventory-worth>strong{font-size:16px;font-weight:800;color:#d6dcdf}
+@media(max-width:1000px){.inventory-worth{padding-right:11px}.inventory-worth>span{font-size:9px}.inventory-worth>strong{font-size:14px}}
+@media(max-width:620px){.header-account{width:100%;justify-content:flex-end;padding-top:10px}.inventory-worth{margin-right:auto;padding-right:12px}.inventory-worth>span{font-size:9px}.inventory-worth>strong{font-size:14px}}
 #winGradient stop:not(:last-child),#previewWinGradient stop:not(:last-child),#battleWinGradient stop:not(:last-child){stop-color:var(--wheel-start)}
 #winGradient stop:last-child,#previewWinGradient stop:last-child,#battleWinGradient stop:last-child{stop-color:var(--wheel-end)}
 .upgrade-wheel .center-chevron{fill:var(--wheel-center)}

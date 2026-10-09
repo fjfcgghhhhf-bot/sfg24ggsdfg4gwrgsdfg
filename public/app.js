@@ -269,6 +269,7 @@ function renderPlayer() {
   communityUi?.identify();
   $('nickname').textContent = player?.nickname || 'Новая сессия';
   $('balance').textContent = money(player?.balance || 0);
+  $('inventoryWorth').textContent = money((player?.inventory || []).reduce((sum,item)=>sum+Math.round(item.price*100),0)/100);
   $('inventoryCount').textContent = player?.inventory.length || 0;
   $('inventoryButton').disabled = !player || busy;
   $('resetButton').disabled = !player || busy;
@@ -454,7 +455,7 @@ const SPIN_STYLES = [
   {accelerate:[.06,.1],cruise:[.1,.16],bend:[1.15,1.4]},
 ];
 let previousSpinStyle=-1;
-function randomSpinMotion(fast) {
+function randomSpinMotion(fast,landing=0) {
   // Cosmetic randomness is sampled once, separately from the server result.
   // Excluding the preceding style keeps consecutive spins visibly different.
   const choices=SPIN_STYLES.map((_,index)=>index).filter((index)=>index!==previousSpinStyle);
@@ -462,9 +463,12 @@ function randomSpinMotion(fast) {
   previousSpinStyle=styleIndex;
   const style=SPIN_STYLES[styleIndex];
   const between=([min,max])=>min+(max-min)*Math.random();
+  const baseDuration=between(fast?[1800,2600]:[6200,8200]),baseTurns=fast?2+Math.floor(Math.random()*2):4+Math.floor(Math.random()*3),shortening=fast?1.5:2;
+  // Reduce the travelled angle along with the time. Including the final partial
+  // turn keeps the angular speed at or below the original longer animation.
+  const turns=Math.floor((baseTurns+landing/360)/shortening-landing/360);
   return {
-    duration:Math.round(between(fast?[1800,2600]:[6200,8200])/(fast?1.5:2)),
-    turns:fast ? 2+Math.floor(Math.random()*2):4+Math.floor(Math.random()*3),
+    duration:Math.round(baseDuration/shortening),turns,baseDuration,baseTurns,
     accelerate:between(style.accelerate),cruise:between(style.cruise),bend:between(style.bend),
   };
 }
@@ -484,11 +488,12 @@ function pointerProgress(t,motion) {
 async function animatePointer(angle) {
   const fast=prefs.fast;
   const reduced=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const motion=reduced ? {duration:0,turns:0}:randomSpinMotion(fast);
-  const duration=motion.duration;
   const start = rotation;
   const normalized = ((rotation%360)+360)%360;
-  const end = rotation + motion.turns*360 + ((angle-normalized+360)%360);
+  const landing=(angle-normalized+360)%360;
+  const motion=reduced ? {duration:0,turns:0}:randomSpinMotion(fast,landing);
+  const duration=motion.duration;
+  const end = rotation + motion.turns*360 + landing;
   await new Promise((resolve)=>{
     const begins = performance.now();
     let lastTick = -1000, lastSector=Math.floor(start/24);
