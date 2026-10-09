@@ -103,3 +103,14 @@ test('Firebase SSE parses split UTF-8 and CRLF frames, nested patches and deleti
     assert.equal(snapshots[0].presence.a.nickname,'Алиса');assert.equal(snapshots[1].presence.b.nickname,'Боб');assert.ok(!snapshots[1].messages.old);assert.ok(!snapshots[2].presence.a);
   }finally{clearTimeout(timeout);unsubscribe?.();client.close();}
 });
+
+test('Firebase locks public access when exported rules contain comments',async()=>{
+  const {privateKey}=generateKeyPairSync('rsa',{modulusLength:2048});let saved;
+  const client=createFirebase({url:'https://unit-test.firebaseio.com/',serviceAccount:{client_email:'test@unit.iam.gserviceaccount.com',private_key:privateKey.export({type:'pkcs8',format:'pem'})},fetchImpl:async(url,options)=>{
+    if(String(url).includes('oauth2'))return Response.json({access_token:'test-token',expires_in:3600});
+    assert.ok(String(url).endsWith('/.settings/rules.json'));
+    if(options.method==='GET')return new Response('{"rules": {\n ".read": true, // default expiry\n /* Firebase comment */ ".write": true,"other":{".validate":"newData.val() === \\\"https://example.com/*safe*/\\\""}}}');
+    saved=JSON.parse(options.body);return Response.json(saved);
+  }});
+  await client.secure();assert.equal(saved.rules['.read'],false);assert.equal(saved.rules['.write'],false);assert.deepEqual(saved.rules.upgrade,{'.read':false,'.write':false});assert.match(saved.rules.other['.validate'],/https:\/\/example.com\/\*safe\*\//);client.close();
+});
