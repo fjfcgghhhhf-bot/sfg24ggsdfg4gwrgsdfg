@@ -7,7 +7,7 @@ const PREFS_KEY = 'upgrade.preferences.v1';
 const money = (n) => `${new Intl.NumberFormat('ru-RU').format(n)} ₽`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const colors = {gold:'#d5a239',red:'#ec5c60',pink:'#c64cd9',purple:'#8a62df',blue:'#507bd2'};
-const goal = {id:'code',name:'Зашифрованный код',weapon:'КОНЕЧНАЯ ЦЕЛЬ',price:500000,image:'/assets/code.svg',rarity:'gold'};
+const MAX_ITEM_PRICE = 100000000;
 let player = null, token = null, source = null, target = null, mode = 'shop';
 let busy = false, shopPage = 1, targetPage = 1, rotation = 180;
 let shopSequence = 0, targetSequence = 0, selectionSequence = 0, toastTimer, audioContext;
@@ -16,8 +16,8 @@ const MAX_UPGRADE_CHANCE = 75, MIN_SAVED_MULTIPLIER = 1.34;
 const minimumTargetPrice = (price) => Math.ceil(Math.round(price*100)*100/MAX_UPGRADE_CHANCE)/100;
 const chanceTooHigh = (from,to) => Math.round(from.price*100)*100 > Math.round(to.price*100)*MAX_UPGRADE_CHANCE;
 function chanceLimitMessage() {
-  return source && minimumTargetPrice(source.price)>goal.price
-    ? 'Для апгрейда с шансом до 75% нужен скин не дороже 375 000 ₽. Продайте этот скин и купите более дешёвый.'
+  return source && minimumTargetPrice(source.price)>MAX_ITEM_PRICE
+    ? 'Для апгрейда с шансом до 75% нужен скин не дороже 75 000 000 ₽. Продайте этот скин и купите более дешёвый.'
     : `Максимальный шанс — 75%. ${source ? `Выберите цель от ${money(minimumTargetPrice(source.price))}.`:'Выберите более дорогую цель.'}`;
 }
 const ZONE_ANIMATIONS = {
@@ -26,10 +26,18 @@ const ZONE_ANIMATIONS = {
   inertia:{label:'Инерция',duration:900,ease:(t)=>1-Math.pow(1-t,5)},
   none:{label:'Без анимации',duration:0,ease:(t)=>t},
 };
-let prefs = {sound:true,fast:false,multipliers:[...DEFAULT_MULTIPLIERS],zoneAnimation:'smooth'};
+const SPIN_ANIMATIONS = {
+  classic:{label:'Классика',description:'Мягкий разгон и долгая остановка',accelerate:[.08,.12],cruise:[.08,.14],bend:[.9,1.1]},
+  glide:{label:'Скольжение',description:'Раннее, очень плавное торможение',accelerate:[.07,.09],cruise:[.02,.04],bend:[.55,.65]},
+  surge:{label:'Импульс',description:'Короткий разгон, упругое затухание',accelerate:[.03,.05],cruise:[.04,.06],bend:[1.4,1.6]},
+  cruise:{label:'Орбита',description:'Ровное вращение перед торможением',accelerate:[.1,.12],cruise:[.27,.31],bend:[.8,.95]},
+  velvet:{label:'Бархат',description:'Постепенный разгон без резкого старта',accelerate:[.25,.3],cruise:[.02,.04],bend:[.8,1]},
+  dramatic:{label:'Притяжение',description:'Долгое замедление с мягким финалом',accelerate:[.14,.18],cruise:[.04,.07],bend:[.4,.5]},
+};
+let prefs = {sound:true,fast:false,multipliers:[...DEFAULT_MULTIPLIERS],zoneAnimation:'smooth',spinAnimation:'classic'};
 let luckyArmed = false, targetLoading = false, activeMultiplier = 2;
 let pendingStorageValue;
-const cache = new Map([['code',goal]]);
+const cache = new Map();
 const cart = new Map();
 let shopItems = [];
 let liveStream = null, liveDrops = [], liveFeedPaused = false, liveFeedReady = false;
@@ -40,7 +48,7 @@ function renderLiveDrops() {
     const item = drop.item;
     const rarity = Object.hasOwn(colors,item.rarity) ? item.rarity : Object.keys(colors).find((key)=>colors[key]===item.rarity) || 'gold';
     const time = new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit'}).format(new Date(drop.at));
-    return `<button type="button" data-action="profile" data-key="${esc(drop.profileId||'')}" class="live-drop rarity-${rarity}${newDropIds.has(drop.id)?' live-drop-new':''}${item.id==='code'?' live-drop-goal':''}" aria-label="Профиль ${esc(drop.nickname)}" ${drop.profileId?'':'disabled'}>
+    return `<button type="button" data-action="profile" data-key="${esc(drop.profileId||'')}" class="live-drop rarity-${rarity}${newDropIds.has(drop.id)?' live-drop-new':''}" aria-label="Профиль ${esc(drop.nickname)}" ${drop.profileId?'':'disabled'}>
       <div class="live-drop-top"><strong>${money(item.price)}</strong>${drop.lucky?'<span class="live-drop-lucky">777</span>':`<span class="live-drop-win">${drop.mode==='battle'?'БАТЛ':'UPGRADE'}</span>`}</div>
       <img src="${esc(item.image)}" alt="${esc(item.weapon)} | ${esc(item.name)}" width="140" height="76" loading="lazy" decoding="async">
       <span class="live-drop-weapon">${esc(item.weapon)}</span><strong class="live-drop-name" title="${esc(item.name)}">${esc(item.name)}</strong>
@@ -81,8 +89,9 @@ window.addEventListener('pagehide',()=>{liveStream?.close();liveStream=null;});
 window.addEventListener('pageshow',()=>connectLiveDrops());
 try { token = localStorage.getItem(SESSION_KEY); prefs = {...prefs,...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')}; } catch { /* Storage warning shown when saving. */ }
 if (!Array.isArray(prefs.multipliers) || prefs.multipliers.length!==4) prefs.multipliers=[...DEFAULT_MULTIPLIERS];
-else prefs.multipliers=prefs.multipliers.map((x,index)=>!Number.isFinite(x)||x<MIN_SAVED_MULTIPLIER||x>50000 ? DEFAULT_MULTIPLIERS[index]:x);
+else prefs.multipliers=prefs.multipliers.map((x,index)=>!Number.isFinite(x)||x<MIN_SAVED_MULTIPLIER||x>10000000 ? DEFAULT_MULTIPLIERS[index]:x);
 if (!Object.hasOwn(ZONE_ANIMATIONS,prefs.zoneAnimation)) prefs.zoneAnimation='smooth';
+if (!Object.hasOwn(SPIN_ANIMATIONS,prefs.spinAnimation)) prefs.spinAnimation='classic';
 function savePreferences() { try {localStorage.setItem(PREFS_KEY,JSON.stringify(prefs));} catch {} }
 function primeAudio() {
   if(!prefs.sound) return null;
@@ -159,10 +168,10 @@ function card(item, action, selected = false) {
   const key = action === 'select-source' || action === 'sell' ? item.inventoryId:item.id;
   const quantity = action === 'add-cart' ? cart.get(item.id) || 0 : 0;
   const disabled = busy || (action === 'add-cart' && !player);
-  const actionText = {'add-cart':quantity ? `В корзине: ${quantity} · ещё +1`:'В корзину',sell:'Продать','select-source':'Выбрать','select-target':item.id === 'code' ? 'Конечная цель':'Выбрать'}[action];
+  const actionText = {'add-cart':quantity ? `В корзине: ${quantity} · ещё +1`:'В корзину',sell:'Продать','select-source':'Выбрать','select-target':'Выбрать'}[action];
   const label = `${item.weapon} ${item.name}, ${money(item.price)}. ${actionText}`;
-  return `<button type="button" class="item-card rarity-${Object.hasOwn(colors,item.rarity)?item.rarity:'gold'} ${item.id === 'code' ? 'code-card':''} ${selected ? 'selected':''} ${quantity ? 'in-cart':''}" data-action="${action}" data-key="${esc(key)}" aria-label="${esc(label)}" ${disabled ? 'disabled':''} aria-pressed="${selected || quantity>0}">
-    <span class="item-price">${money(item.price)}</span><span class="item-wear">${item.id === 'code' ? 'LOCKED':({'Прямо с завода':'FN','Немного поношенное':'MW','После полевых испытаний':'FT','Поношенное':'WW','Закалённое в боях':'BS'}[item.wear] || 'FN')}</span>
+  return `<button type="button" class="item-card rarity-${Object.hasOwn(colors,item.rarity)?item.rarity:'gold'} ${selected ? 'selected':''} ${quantity ? 'in-cart':''}" data-action="${action}" data-key="${esc(key)}" aria-label="${esc(label)}" ${disabled ? 'disabled':''} aria-pressed="${selected || quantity>0}">
+    <span class="item-price">${money(item.price)}</span><span class="item-wear">${({'Прямо с завода':'FN','Немного поношенное':'MW','После полевых испытаний':'FT','Поношенное':'WW','Закалённое в боях':'BS'}[item.wear] || 'FN')}</span>
     <img class="item-image" src="${esc(item.image)}" alt="${esc(`${item.weapon} | ${item.name}`)}" loading="lazy" width="220" height="150">
     <span class="item-type">${esc(item.weapon)}</span><span class="item-name">${esc(item.name)}</span>
     ${quantity ? `<span class="cart-quantity-badge">×${quantity}</span>`:''}<span class="item-action">${selected ? 'Выбрано':actionText}${action === 'sell' ? ` · ${money(item.price)}`:''}</span>
@@ -172,10 +181,10 @@ function empty(text, action = '') { return `<div class="grid-empty"><svg aria-hi
 function renderDisplay(id,item,isTarget) {
   const parent = $(id);
   if (!item) {
-    const ghost = [...cache.values()].find((i) => i.id !== 'code');
+    const ghost = [...cache.values()].find(Boolean);
     parent.innerHTML = `<div class="display-empty">${ghost ? `<img class="ghost-weapon" src="${esc(ghost.image)}" alt="">`:''}<svg class="empty-chevrons ${isTarget ? '':'down'}" aria-hidden="true"><use href="#icon-upgrade"/></svg></div><div class="display-caption">${isTarget ? 'Ваша следующая победа':'Начните с выбора скина'}</div>`;
   } else {
-    parent.innerHTML = `<img class="display-image ${item.id === 'code' ? 'display-code':''}" src="${esc(item.image)}" alt="${esc(`${item.weapon} ${item.name}`)}"><div class="display-type">${esc(item.weapon)}</div><div class="display-name">${esc(item.name)}</div><div class="display-price">${money(item.price)}</div>${item.id === 'code' ? '<span class="encrypted-label">10 цифр · откроется после победы</span>':isTarget ? `<button class="find-in-shop" data-action="find-in-shop" data-key="${esc(item.id)}" ${busy?'disabled':''}>Найти в магазине <span>↗</span></button>`:''}`;
+    parent.innerHTML = `<img class="display-image" src="${esc(item.image)}" alt="${esc(`${item.weapon} ${item.name}`)}"><div class="display-type">${esc(item.weapon)}</div><div class="display-name">${esc(item.name)}</div><div class="display-price">${money(item.price)}</div>${isTarget ? `<button class="find-in-shop" data-action="find-in-shop" data-key="${esc(item.id)}" ${busy?'disabled':''}>Найти в магазине <span>↗</span></button>`:''}`;
   }
 }
 function createSectorAnimator(element,initial=50) {
@@ -230,7 +239,7 @@ function renderSelection() {
   $('upgradeButton').disabled = !valid || busy || targetLoading || (luckyArmed && chance<50);
   $('upgradeButton').classList.toggle('spinning',busy);
   renderMultiplierButtons();
-  if (!busy) setStatus(targetLoading ? 'Подбираем цель…':!player ? 'Введите ник и получите 500 ₽ для старта':!source ? 'Купите скин в магазине и выберите его слева':overLimit || minimumTargetPrice(source.price)>goal.price ? chanceLimitMessage():!target ? 'Выберите предмет, который хотите получить':!valid ? 'Стоимость цели должна быть выше стоимости вашего скина':luckyArmed && chance<50 ? 'Для 777 нужен обычный шанс от 50%. Выберите более дешёвую цель.':luckyArmed ? `777: гарантированный успех · обычный шанс ${chance.toFixed(2).replace('.',',')}%`:`Шанс ${chance.toFixed(2).replace('.',',')}% · ${money(source.price)} → ${money(target.price)}`);
+  if (!busy) setStatus(targetLoading ? 'Подбираем цель…':!player ? 'Введите ник и получите 500 ₽ для старта':!source ? 'Купите скин в магазине и выберите его слева':overLimit || minimumTargetPrice(source.price)>MAX_ITEM_PRICE ? chanceLimitMessage():!target ? 'Выберите предмет, который хотите получить':!valid ? 'Стоимость цели должна быть выше стоимости вашего скина':luckyArmed && chance<50 ? 'Для 777 нужен обычный шанс от 50%. Выберите более дешёвую цель.':luckyArmed ? `777: гарантированный успех · обычный шанс ${chance.toFixed(2).replace('.',',')}%`:`Шанс ${chance.toFixed(2).replace('.',',')}% · ${money(source.price)} → ${money(target.price)}`);
 }
 function renderBoosters(chance=0) {
   const remaining=player?.boosters?.luckyRemaining ?? 3;
@@ -246,14 +255,14 @@ function multiplierPrice(price,multiplier) {
   const sourceCents=Math.round(price*100);
   const rawCents=sourceCents*multiplier;
   const targetCents=Math.round(rawCents+Number.EPSILON*Math.max(1,Math.abs(rawCents))*2);
-  return Math.min(500000,Math.max(Math.ceil(sourceCents*100/MAX_UPGRADE_CHANCE),targetCents)/100);
+  return Math.min(MAX_ITEM_PRICE,Math.max(Math.ceil(sourceCents*100/MAX_UPGRADE_CHANCE),targetCents)/100);
 }
 function renderMultiplierButtons() {
   document.querySelectorAll('[data-multiplier]').forEach((button,index)=>{
     const multiplier=prefs.multipliers[index];
     button.dataset.multiplier=String(multiplier);
     const percent=source ? source.price/multiplierPrice(source.price,multiplier)*100:100/multiplier;
-    const unavailable=Boolean(source && minimumTargetPrice(source.price)>goal.price);
+    const unavailable=Boolean(source && minimumTargetPrice(source.price)>MAX_ITEM_PRICE);
     const label=`×${new Intl.NumberFormat('ru-RU',{maximumFractionDigits:2}).format(multiplier)}`;
     const chanceLabel=unavailable ? 'Недоступно':`${percent.toFixed(2).replace('.',',')}%`;
     button.innerHTML=`<span class="multiplier-value">${label}</span><span class="multiplier-chance">${chanceLabel}</span>`;
@@ -278,21 +287,17 @@ function renderPlayer() {
   else renderShopGrid();
   renderInventoryModal();
   renderCart();
-  document.body.classList.toggle('goal-unlocked',Boolean(player?.unlockedCode));
-  $('goalReward').hidden=!player?.unlockedCode;
-  $('goalCode').textContent=player?.unlockedCode || '';
 }
 function renderInventoryGrid() {
   if($('sourceCount')) $('sourceCount').textContent=`${player?.inventory.length || 0} предметов`;
-  $('sourceGrid').innerHTML = player?.inventory.length ? player.inventory.filter((i) => i.id !== 'code').map((i) => card(i,'select-source',i.inventoryId===source?.inventoryId)).join('') : empty('В инвентаре пока нет скинов','<span>Купите первый скин за игровой баланс.</span><button class="button primary" data-action="open-shop">Открыть магазин</button>');
-  if (player?.inventory.length && !player.inventory.some((i) => i.id !== 'code')) $('sourceGrid').innerHTML = empty('Код уже в вашем инвентаре!','<button class="button primary" data-action="open-shop">Открыть магазин</button>');
+  $('sourceGrid').innerHTML = player?.inventory.length ? player.inventory.map((i) => card(i,'select-source',i.inventoryId===source?.inventoryId)).join('') : empty('В инвентаре пока нет скинов','<span>Купите первый скин за игровой баланс.</span><button class="button primary" data-action="open-shop">Открыть магазин</button>');
   $('sourcePager').innerHTML = '';
 }
 function renderInventoryModal() {
   if (!$('inventoryItems')) return;
-  $('inventoryItems').innerHTML = player?.inventory.length ? player.inventory.map((i) => i.id === 'code' ? `<div class="unlocked-prize"><img src="/assets/code.svg" alt="Код"><strong>Цель достигнута</strong><code>${esc(player.unlockedCode || '••••••••••')}</code><button class="button primary" data-action="copy-code">Скопировать код</button></div>`:card(i,'sell')).join(''):empty('Ваш инвентарь пуст','<span>Предметы появятся здесь после покупки или удачного апгрейда.</span>');
+  $('inventoryItems').innerHTML = player?.inventory.length ? player.inventory.map((i) => card(i,'sell')).join(''):empty('Ваш инвентарь пуст','<span>Предметы появятся здесь после покупки или удачного апгрейда.</span>');
   if ($('inventorySummary')) $('inventorySummary').textContent = `${player?.inventory.length || 0} предметов · Баланс ${money(player?.balance || 0)}`;
-  const sellable=player?.inventory.filter((item)=>item.id!=='code') || [];
+  const sellable=player?.inventory || [];
   const total=sellable.reduce((sum,item)=>sum+Math.round(item.price*100),0)/100;
   for(const id of ['sellAllButton','sellAllInline']) {
     $(id).disabled=busy||!sellable.length;
@@ -330,7 +335,7 @@ function renderCart() {
 }
 function changeCart(id,change) {
   if(busy||!player)return;
-  const item=cache.get(id);if(!item||id==='code')return;
+  const item=cache.get(id);if(!item)return;
   if(change>0 && cartTotals().count>=200){toast('В корзине может быть не больше 200 скинов.');return;}
   const quantity=change===null ? 0:(cart.get(id)||0)+change;
   if(quantity>0)cart.set(id,quantity);else cart.delete(id);
@@ -346,7 +351,7 @@ async function loadShop() {
   try {
     const data = await api(`catalog?${params}`);
     if (seq !== shopSequence || mode !== 'shop') return;
-    const items = data.items.filter((i)=>i.id !== 'code'); items.forEach((i)=>cache.set(i.id,i));
+    const items = data.items; items.forEach((i)=>cache.set(i.id,i));
     shopItems=items;
     if($('sourceCount')) $('sourceCount').textContent=`${new Intl.NumberFormat('ru-RU').format(data.total)} скинов`;
     renderShopGrid();
@@ -359,9 +364,9 @@ async function loadTargets() {
   try {
     const data = await api(`catalog?${params}`);
     if (seq !== targetSequence) return;
-    const items = data.items.filter((i)=>i.id!=='code'); items.forEach((i)=>cache.set(i.id,i));
-    const selectedExtra=target && target.id!=='code' && !items.some((i)=>i.id===target.id) ? card(target,'select-target',true):'';
-    $('targetGrid').innerHTML = card(goal,'select-target',target?.id==='code') + selectedExtra + (items.length ? items.map((i)=>card(i,'select-target',target?.id===i.id)).join(''):empty('По вашему запросу ничего не найдено'));
+    const items = data.items; items.forEach((i)=>cache.set(i.id,i));
+    const selectedExtra=target && !items.some((i)=>i.id===target.id) ? card(target,'select-target',true):'';
+    $('targetGrid').innerHTML = selectedExtra + (items.length ? items.map((i)=>card(i,'select-target',target?.id===i.id)).join(''):empty('По вашему запросу ничего не найдено'));
     pager('targetPager',data.page,data.pages,data.total,'target');
   } catch(error) { if(seq===targetSequence) $('targetGrid').innerHTML = empty(error.message,'<button class="button" data-action="retry-target">Повторить</button>'); }
 }
@@ -403,7 +408,7 @@ async function sell(inventoryId) {
   finally { busy=false; renderPlayer(); if(mode==='shop') loadShop(); flushOtherTab(); }
 }
 async function sellAll() {
-  if(busy||!player||!player.inventory.some((item)=>item.id!=='code'))return;
+  if(busy||!player||!player.inventory.length)return;
   busy=true;renderPlayer();
   try {
     const data=await api('sell-all',{token});saveSnapshot(data);
@@ -434,42 +439,36 @@ function selectTarget(id) {
 async function pickMultiplier(multiplier,notify=true) {
   if(!Number.isFinite(multiplier)||multiplier<=1) return;
   if(multiplier<100/MAX_UPGRADE_CHANCE){toast('Максимальный шанс — 75%. Увеличьте множитель.');return;}
-  if(source && minimumTargetPrice(source.price)>goal.price){target=null;renderSelection();if(notify)toast(chanceLimitMessage());return;}
+  if(source && minimumTargetPrice(source.price)>MAX_ITEM_PRICE){target=null;renderSelection();if(notify)toast(chanceLimitMessage());return;}
   activeMultiplier=multiplier;
   if(!source) {renderMultiplierButtons();if(notify)toast('Множитель выбран. Теперь выберите свой скин слева.');return;}
   const seq = ++selectionSequence, sourceId = source.inventoryId;
   const price = multiplierPrice(source.price,multiplier);
   targetLoading=true;activeMultiplier=multiplier;renderSelection();
   try {
-    const item = price===500000 ? goal:await api(`item?id=skin-${price}`);
+    const item = await api(`item?id=skin-${price}`);
     if(seq !== selectionSequence || source?.inventoryId !== sourceId) return;
     const resolved = item.item || item; cache.set(resolved.id,resolved); target=resolved;
-    $('targetMin').value=Math.max(10,price-50); $('targetMax').value=Math.min(500000,price+130); $('targetSort').value='asc'; targetPage=1;
+    $('targetMin').value=Math.max(10,price-50); $('targetMax').value=Math.min(MAX_ITEM_PRICE,price+130); $('targetSort').value='asc'; targetPage=1;
     targetLoading=false;renderSelection(); await loadTargets();
   } catch(error) { if(seq===selectionSequence){activeMultiplier=null;toast(error.message);} }
   finally {if(seq===selectionSequence){targetLoading=false;renderSelection();}}
 }
-const SPIN_STYLES = [
-  {accelerate:[.08,.12],cruise:[.08,.14],bend:[.9,1.1]},
-  {accelerate:[.09,.13],cruise:[.03,.07],bend:[.75,.9]},
-  {accelerate:[.06,.1],cruise:[.1,.16],bend:[1.15,1.4]},
-];
-let previousSpinStyle=-1;
+let previousSpinVariant=-1;
 function randomSpinMotion(fast,landing=0) {
   // Cosmetic randomness is sampled once, separately from the server result.
-  // Excluding the preceding style keeps consecutive spins visibly different.
-  const choices=SPIN_STYLES.map((_,index)=>index).filter((index)=>index!==previousSpinStyle);
-  const styleIndex=choices[Math.floor(Math.random()*choices.length)];
-  previousSpinStyle=styleIndex;
-  const style=SPIN_STYLES[styleIndex];
+  const style=SPIN_ANIMATIONS[prefs.spinAnimation] || SPIN_ANIMATIONS.classic;
+  const variants=[0,1,2].filter(value=>value!==previousSpinVariant);
+  const variant=variants[Math.floor(Math.random()*variants.length)];previousSpinVariant=variant;
   const between=([min,max])=>min+(max-min)*Math.random();
+  const curve=([min,max])=>min+(max-min)*(variant+Math.random())/3;
   const baseDuration=between(fast?[1800,2600]:[6200,8200]),baseTurns=fast?2+Math.floor(Math.random()*2):4+Math.floor(Math.random()*3),shortening=fast?1.5:2;
   // Reduce the travelled angle along with the time. Including the final partial
   // turn keeps the angular speed at or below the original longer animation.
   const turns=Math.floor((baseTurns+landing/360)/shortening-landing/360);
   return {
     duration:Math.round(baseDuration/shortening),turns,baseDuration,baseTurns,
-    accelerate:between(style.accelerate),cruise:between(style.cruise),bend:between(style.bend),
+    accelerate:curve(style.accelerate),cruise:curve(style.cruise),bend:curve(style.bend),
   };
 }
 function pointerProgress(t,motion) {
@@ -526,10 +525,10 @@ async function upgrade() {
     source=null;
     if(data.result.luckyUsed) luckyArmed=false;
     busy=false; renderPlayer(); switchMode('inventory'); sound(data.result.won);
-    finalStatus = data.result.won ? data.result.item.id==='code' ? 'Цель достигнута! Код открыт ниже и сохранён в инвентаре.':`${data.result.luckyUsed ? '777 · ':''}Успех! ${data.result.item.name} добавлен в инвентарь.`:'Неудача. Выбранный скин потерян.';
+    finalStatus = data.result.won ? `${data.result.luckyUsed ? '777 · ':''}Успех! ${data.result.item.name} добавлен в инвентарь.`:'Неудача. Выбранный скин потерян.';
     finalKind=data.result.won ? 'success':'error';
     setStatus(finalStatus,finalKind);
-    if(!data.result.won && player.balance<10 && !player.inventory.some((i)=>i.id!=='code')) finalStatus='Скины закончились. Нажмите «Повторить сессию», чтобы начать заново.';
+    if(!data.result.won && player.balance<10 && !player.inventory.length) finalStatus='Скины закончились. Нажмите «Повторить сессию», чтобы начать заново.';
   } catch(error) {
     toast(error.message);
     // Recover an already committed response if the connection dropped after mutation.
@@ -554,14 +553,13 @@ document.addEventListener('click',async(event)=>{
   if(action==='select-target') selectTarget(button.dataset.key);
   if(action==='open-shop') { switchMode('shop'); $('sourceGrid').scrollIntoView({behavior:'smooth',block:'center'}); }
   if(action==='find-in-shop' && !busy) {
-    const item=cache.get(button.dataset.key);if(!item || item.id==='code')return;
+    const item=cache.get(button.dataset.key);if(!item)return;
     $('shopSearch').value='';$('shopMin').value=String(item.price);$('shopMax').value=String(item.price);$('shopSort').value='asc';shopPage=1;
     switchMode('shop');$('sourceGrid').scrollIntoView({behavior:'smooth',block:'center'});
   }
   if(action==='retry-shop') loadShop();
   if(action==='retry-target') loadTargets();
   if(action==='page') { if(button.dataset.side==='shop') {shopPage=Number(button.dataset.page);loadShop();} else {targetPage=Number(button.dataset.page);loadTargets();} }
-  if(action==='copy-code' && player?.unlockedCode) { try {await navigator.clipboard.writeText(player.unlockedCode);toast('Код скопирован.');} catch {toast('Выделите и скопируйте код вручную.');} }
 });
 $('inventoryTab').addEventListener('click',()=>switchMode('inventory'));
 $('shopTab').addEventListener('click',()=>switchMode('shop'));
@@ -601,7 +599,7 @@ $('restoreMultipliers').addEventListener('click',()=>{DEFAULT_MULTIPLIERS.forEac
 $('multiplierForm').addEventListener('submit',async(event)=>{
   event.preventDefault();if(busy)return;
   const values=DEFAULT_MULTIPLIERS.map((_,i)=>Number($(`multiplier${i}`).value));
-  if(values.some((value)=>!Number.isFinite(value)||value<MIN_SAVED_MULTIPLIER||value>50000||Math.abs(value*100-Math.round(value*100))>1e-7)){$('multiplierError').textContent='Введите значения от 1,34 до 50 000, не более двух знаков после запятой. Максимальный шанс — 75%.';return;}
+  if(values.some((value)=>!Number.isFinite(value)||value<MIN_SAVED_MULTIPLIER||value>10000000||Math.abs(value*100-Math.round(value*100))>1e-7)){$('multiplierError').textContent='Введите значения от 1,34 до 10 000 000, не более двух знаков после запятой. Максимальный шанс — 75%.';return;}
   const activeIndex=prefs.multipliers.indexOf(activeMultiplier);
   prefs.multipliers=values;savePreferences();$('multiplierDialog').close();
   if(activeIndex>=0)await pickMultiplier(values[activeIndex],false);
@@ -624,8 +622,12 @@ function renderPreferences() {
 }
 function renderZonePreferences() {
   const option=ZONE_ANIMATIONS[prefs.zoneAnimation];
-  $('zoneAnimationLabel').textContent=option.label;
-  $('zoneSelectionStatus').textContent=`Выбрано: ${option.label}. Сохранено.`;
+  $('zoneAnimationLabel').textContent=`${option.label} · ${SPIN_ANIMATIONS[prefs.spinAnimation].label}`;
+  $('zoneSelectionStatus').textContent=`Зона: ${option.label}. Прокрутка: ${SPIN_ANIMATIONS[prefs.spinAnimation].label}. Сохранено.`;
+  for(const key of Object.keys(SPIN_ANIMATIONS)) {
+    $(`spin-${key}`).setAttribute('aria-pressed',String(key===prefs.spinAnimation));
+    $(`spin-${key}`).classList.toggle('active',key===prefs.spinAnimation);
+  }
   for(const key of Object.keys(ZONE_ANIMATIONS)) {
     $(`zone-${key}`).setAttribute('aria-pressed',String(key===prefs.zoneAnimation));
     $(`zone-${key}`).classList.toggle('active',key===prefs.zoneAnimation);
@@ -651,7 +653,26 @@ for(const key of Object.keys(ZONE_ANIMATIONS)) $(`zone-${key}`).addEventListener
 $('zonePreviewRange').addEventListener('input',()=>previewZone(Number($('zonePreviewRange').value)));
 for(const percent of [10,50,75]) $(`zonePreview${percent}`).addEventListener('click',()=>previewZone(percent));
 $('zoneReplay').addEventListener('click',()=>previewZone(Number($('zonePreviewRange').value)||75,true));
-$('zoneAnimationDialog').addEventListener('close',()=>previewSector.finish());
+let spinPreviewFrame=null;
+function stopSpinPreview() {if(spinPreviewFrame!==null)cancelAnimationFrame(spinPreviewFrame);spinPreviewFrame=null;}
+function previewSpin() {
+  stopSpinPreview();
+  const motion=randomSpinMotion(prefs.fast,180),begins=performance.now();
+  const reduced=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  $('spinPreviewStatus').textContent=`${SPIN_ANIMATIONS[prefs.spinAnimation].label} · ${(motion.duration/1000).toFixed(1)} с${prefs.fast?' · быстрый режим':''}`;
+  function frame(now) {
+    const t=reduced?1:Math.min(1,Math.max(0,(now-begins)/motion.duration));
+    $('spinPreviewPointer').setAttribute('transform',`rotate(${(motion.turns*360+180)*pointerProgress(t,motion)} 200 200)`);
+    spinPreviewFrame=t<1?requestAnimationFrame(frame):null;
+  }
+  spinPreviewFrame=requestAnimationFrame(frame);
+}
+for(const key of Object.keys(SPIN_ANIMATIONS)) $(`spin-${key}`).addEventListener('click',()=>{
+  if(busy)return;
+  prefs.spinAnimation=key;savePreferences();renderZonePreferences();previewSpin();
+});
+$('spinReplay').addEventListener('click',previewSpin);
+$('zoneAnimationDialog').addEventListener('close',()=>{previewSector.finish();stopSpinPreview();});
 for(const [id,key] of [['soundToggle','sound'],['fastToggle','fast']]) $(id).addEventListener('click',()=>{prefs[key]=!prefs[key];renderPreferences();savePreferences();if(key==='sound' && prefs.sound)primeAudio();toast(key==='sound' ? `Звук ${prefs.sound?'включён':'выключен'}`:`Быстрая анимация ${prefs.fast?'включена':'выключена'}`);});
 window.addEventListener('storage',async(event)=>{
   if(event.key!==SESSION_KEY) return;
@@ -669,7 +690,7 @@ async function init() {
   $('targetSort').value='desc';
   renderPreferences();
   if(token) {
-    try {saveSnapshot(await api('resume',{token}));mode=player.inventory.some((i)=>i.id!=='code')?'inventory':'shop';}
+    try {saveSnapshot(await api('resume',{token}));mode=player.inventory.length?'inventory':'shop';}
     catch(error) {
       if(error.status===401 || error.status===410) {token=null;localStorage.removeItem(SESSION_KEY);}
       else {setStatus(error.message);toast('Сохранение на месте. Перезагрузите страницу после восстановления соединения.');return;}

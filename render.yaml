@@ -15,8 +15,6 @@ services:
         value: production
       - key: SESSION_SECRET
         generateValue: true
-      - key: GOAL_CODE
-        sync: false
       - key: DATABASE_URL
         sync: false
       - key: FIREBASE_DATABASE_URL

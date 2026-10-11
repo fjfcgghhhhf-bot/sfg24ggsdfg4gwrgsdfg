@@ -126,7 +126,7 @@ function harness({ random = () => 0.5, engine, savedToken, preferences, intercep
   const plain = (code) => JSON.parse(evaluate(`JSON.stringify(${code})`));
   function install(snapshot, targetPrice = 200) {
     context.fixture = snapshot;
-    context.fixtureTarget = targetPrice === 500000 ? engine.catalog.get('code') : engine.catalog.get(`skin-${targetPrice}`);
+    context.fixtureTarget = engine.catalog.get(`skin-${targetPrice}`);
     evaluate('saveSnapshot(fixture,false); mode="inventory"; source=player.inventory[0]||null; target=fixtureTarget; cache.set(target.id,target); renderPlayer();');
     return snapshot;
   }
@@ -323,7 +323,7 @@ test('live feed preserves history on connection errors and releases its connecti
 
 test('frontend multiplier preserves 1.5x prices, rounds in cents, and caps at the goal', () => {
   const h = harness();
-  for (const [price, multiplier, expected] of [[10, 1.5, 15], [15, 1.5, 22.5], [22.5, 1.5, 33.75], [10.03, 1.5, 15.05], [400000, 2, 500000]]) assert.equal(h.evaluate(`multiplierPrice(${price},${multiplier})`), expected);
+  for (const [price, multiplier, expected] of [[10, 1.5, 15], [15, 1.5, 22.5], [22.5, 1.5, 33.75], [10.03, 1.5, 15.05], [400000, 2, 800000]]) assert.equal(h.evaluate(`multiplierPrice(${price},${multiplier})`), expected);
 });
 
 test('1.5x selects an exact fractional item, displays 66.67%, and can find it in the shop', async () => {
@@ -349,8 +349,8 @@ test('a pending multiplier blocks upgrade and cannot replace a later manual sele
   assert.equal(h.element('upgradeButton').disabled, true);
   await h.evaluate('upgrade()');
   assert.equal(h.requests.filter((r) => r.path === '/api/upgrade').length, 0);
-  h.evaluate('selectTarget("code")'); gate.resolve(); await choosing;
-  assert.equal(h.evaluate('target.id'), 'code'); assert.equal(h.evaluate('targetLoading'), false);
+  h.evaluate('cache.set("skin-100000000",fixtureTarget={...target,id:"skin-100000000",price:100000000});selectTarget("skin-100000000")'); gate.resolve(); await choosing;
+  assert.equal(h.evaluate('target.id'), 'skin-100000000'); assert.equal(h.evaluate('targetLoading'), false);
 });
 
 test('new and restored sessions list the full shop range instead of a 500-ruble cap', async () => {
@@ -441,11 +441,11 @@ test('manual target selection, direct upgrade and the goal price cap cannot bypa
   assert.match(h.element('statusLine').textContent,/75%/);
   await h.evaluate('upgrade()');assert.equal(h.requests.length,0);
   const initial=h.seed(100,200);
-  const expensive=h.engine.upgrade(initial.token,initial.player.inventory[0].inventoryId,'skin-375000.01');
-  h.install(expensive,500000);
+  const expensive=h.engine.upgrade(initial.token,initial.player.inventory[0].inventoryId,'skin-75000000.01');
+  h.install(expensive,100000000);
   assert.equal(h.element('upgradeButton').disabled,true);
   assert.ok(h.presets.every((button)=>button.disabled));
-  assert.match(h.element('statusLine').textContent,/375 000/);
+  assert.match(h.element('statusLine').textContent,/75 000 000/);
   await h.evaluate('pickMultiplier(2)');assert.equal(h.evaluate('target'),null);
   await h.evaluate('upgrade()');assert.equal(h.requests.length,0);
 });
@@ -617,20 +617,20 @@ test('a lost checkout response restores the purchase and clears the cart without
   assert.equal(engine.resume(h.storage.get(SESSION_KEY)).player.balance,390);
 });
 
-test('sell all removes skins and the selected source, preserves the code, and disables empty inventory actions',async()=>{
+test('sell all removes skins and the selected source, and disables empty inventory actions',async()=>{
   const h=harness();let session=h.seed(10,20);
-  session=h.engine.upgrade(session.token,session.player.inventory[0].inventoryId,'code');
+  session=h.engine.upgrade(session.token,session.player.inventory[0].inventoryId,'skin-500000');
   session=h.engine.buyCart(session.token,[{itemId:'skin-10.03',quantity:2},{itemId:'skin-22.51',quantity:1}]);
   h.install(session);await h.evaluate('selectSource(player.inventory.find((item)=>item.id!=="code").inventoryId)');
   const selling=h.clickDataset({action:'sell-all'});await h.clickDataset({action:'sell-all'});await selling;
   assert.equal(h.requests.filter((r)=>r.path==='/api/sell-all').length,1);
   assert.equal(h.evaluate('source'),null);
-  assert.equal(h.evaluate('player.balance'),490);
-  assert.deepEqual(h.plain('player.inventory.map((item)=>item.id)'),['code']);
-  assert.equal(h.evaluate('player.unlockedCode'),'1234567890');
+  assert.equal(h.evaluate('player.balance'),500490);
+  assert.deepEqual(h.plain('player.inventory.map((item)=>item.id)'),[]);
+  assert.equal(h.evaluate('player.unlockedCode'),undefined);
   assert.equal(h.element('sellAllButton').disabled,true);
   assert.equal(h.element('sellAllInline').disabled,true);
-  assert.equal(h.engine.resume(h.storage.get(SESSION_KEY)).player.balance,490);
+  assert.equal(h.engine.resume(h.storage.get(SESSION_KEY)).player.balance,500490);
 });
 
 test('all sector animations cross 50% smoothly on a fixed circle, stay centred, and finish at the exact chance',()=>{
@@ -693,7 +693,7 @@ test('animation selection persists, preview stays separate from the game, and cl
   assert.equal(h.element('zoneAnimationDialog').open,true);
   await h.dispatch('zone-inertia','click');h.frame(80);
   assert.equal(JSON.parse(h.storage.get(PREFS_KEY)).zoneAnimation,'inertia');
-  assert.equal(h.element('zoneAnimationLabel').textContent,'Инерция');
+  assert.equal(h.element('zoneAnimationLabel').textContent,'Инерция · Классика');
   await h.dispatch('zonePreview10','click');
   assert.equal(h.element('zonePreviewValue').textContent,'10%');
   assert.equal(h.evaluate('winSector.value'),50);assert.equal(h.storage.get(SESSION_KEY),snapshot);
@@ -711,6 +711,34 @@ test('reduced motion and no-animation mode apply instantly and invalid saved mod
   }
   const h=harness({preferences:{zoneAnimation:'unknown'}});
   assert.equal(h.evaluate('prefs.zoneAnimation'),'smooth');
+});
+
+test('six spin styles persist, preview without wagers, cancel on close and land exactly at both speeds',async()=>{
+  const h=harness({preferences:{sound:false}}),keys=h.plain('Object.keys(SPIN_ANIMATIONS)');
+  assert.equal(keys.length,6);
+  const signatures=[];
+  for(const key of keys){
+    const before=h.evaluate('rotation');
+    await h.dispatch(`spin-${key}`,'click');
+    assert.equal(JSON.parse(h.storage.get(PREFS_KEY)).spinAnimation,key);
+    assert.equal(h.element(`spin-${key}`).getAttribute('aria-pressed'),'true');
+    h.frame(500);assert.equal(h.evaluate('rotation'),before);assert.equal(h.requests.length,0);
+    h.element('zoneAnimationDialog').close();assert.equal(h.pendingFrames,0);
+    const motion=h.plain('randomSpinMotion(false)');h.context.testMotion=motion;
+    signatures.push(h.evaluate('pointerProgress(.4,testMotion)').toFixed(3));
+    for(const fast of [false,true]){
+      h.evaluate(`prefs.fast=${fast}`);
+      const spin=h.evaluate('animatePointer(259.125)');
+      let last=h.evaluate('rotation');
+      while(h.pendingFrames){h.frame(47);const current=h.evaluate('rotation');assert.ok(current>=last);last=current;}
+      await spin;assert.ok(Math.abs(last%360-259.125)<1e-8);
+    }
+    const restored=harness({preferences:JSON.parse(h.storage.get(PREFS_KEY))});
+    assert.equal(restored.evaluate('prefs.spinAnimation'),key);
+  }
+  assert.equal(new Set(signatures).size,6);
+  assert.equal(harness({preferences:{spinAnimation:'invalid'}}).evaluate('prefs.spinAnimation'),'classic');
+  const reduced=harness({reducedMotion:true});await reduced.dispatch('spin-glide','click');reduced.frame(16);assert.equal(reduced.pendingFrames,0);
 });
 
 test('normal pointer spin starts gently, retains a long braking phase and lands without a jump',async()=>{

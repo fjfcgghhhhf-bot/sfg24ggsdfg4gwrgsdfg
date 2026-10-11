@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Free CS2 skin upgrade game — from 500 rubles to the encrypted code",
+  "description": "Free CS2 skin upgrade game — rare skin collection from 500 virtual rubles",
   "engines": {
     "node": ">=24.0.0"
   },

@@ -6,7 +6,7 @@ export function createSocial({$,document,window,getPlayer,getToken,isBusy,setBus
   const player=()=>getPlayer(),active=()=>battle?.status==='active',mine=()=>battle?.players.find((p)=>p.id===player()?.id);
   const chain=()=>mine()?.chains.find((c)=>c.id===chainId);
   const cents=(price)=>Math.round(price*100);
-  const canUpgrade=(item)=>item&&cents(item.price)*100<=49_999_999*75;
+  const canUpgrade=(item)=>item&&cents(item.price)*100<=10_000_000_000*75;
   const date=(at)=>new Intl.DateTimeFormat('ru-RU',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}).format(new Date(at));
   const battleNow=()=>Date.now()+offset;
   const remaining=()=>battle?.endsAt ? Math.max(0,battle.endsAt-battleNow()):0;
@@ -119,7 +119,7 @@ export function createSocial({$,document,window,getPlayer,getToken,isBusy,setBus
     if(!Number.isFinite(chance)||chance<=0||chance>75){toast('Шанс должен быть больше 0 и не выше 75%.');return;}
     const sequence=++targetSequence,source=chain().item,id=chainId;
     $('battleChance').value=String(chance);
-    const price=Math.min(499999.99,Math.max(Math.ceil(cents(source.price)*100/75),Math.ceil(cents(source.price)*100/chance))/100);
+    const price=Math.min(100000000,Math.max(Math.ceil(cents(source.price)*100/75),Math.ceil(cents(source.price)*100/chance))/100);
     if(cents(source.price)*100>cents(price)*75){target=null;renderTarget();return;}
     target=null;$('battleUpgradeButton').disabled=true;
     try {const item=await api(`item?id=skin-${price}`);if(sequence!==targetSequence||chainId!==id||chain()?.item?.id!==source.id)return;target=item;renderTarget();}

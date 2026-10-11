@@ -59,11 +59,11 @@ test('all viewers receive real wins, reconnects catch up, and private results ne
     draw = 0;
     assert.equal((await post('upgrade', { token: bobBought.token, inventoryId: bobBought.player.inventory[0].inventoryId, targetId: 'skin-200' })).data.result.won,false);
     draw = .5;
-    const codeWin = (await post('upgrade', { token: won.token, inventoryId: won.player.inventory[0].inventoryId, targetId: 'code' })).data;
-    assert.equal(codeWin.player.unlockedCode,goalCode);
+    const codeWin = (await post('upgrade', { token: won.token, inventoryId: won.player.inventory[0].inventoryId, targetId: 'skin-100000000' })).data;
+    assert.equal(codeWin.player.unlockedCode,undefined);
     const [codeA,codeB] = await Promise.all([viewerA(),viewerB()]);
     assert.deepEqual(codeA,codeB);
-    assert.equal(codeA.data.item.id,'code');
+    assert.equal(codeA.data.item.id,'skin-100000000');
     assert.ok(!JSON.stringify(codeA).includes(goalCode));
     const viewerC = await connect(), snapshot = await viewerC();
     assert.deepEqual(snapshot,{ event:'snapshot',data:[codeA.data,a.data] });

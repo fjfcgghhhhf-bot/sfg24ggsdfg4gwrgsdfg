@@ -78,7 +78,7 @@ test('unlimited chains, 75 percent cap, booster prohibition, stop, and one-time 
 test('timeout and both-empty chains settle automatically; ties refund both and code cannot be won in a battle',()=>{
   const {game,advance,draw}=setup();let pair=duel(game);
   const c=game.battles.state(pair.alice.token,pair.id).battle.players[0].chains[0];
-  assert.throws(()=>game.battles.upgrade(pair.alice.token,pair.id,c.id,'code',0,false),error('BATTLE_GOAL_DISABLED'));
+  assert.throws(()=>game.battles.upgrade(pair.alice.token,pair.id,c.id,'code',0,false),error('ITEM_NOT_FOUND'));
   advance(300000);assert.throws(()=>spin(game,pair.alice,pair.id),error('BATTLE_NOT_ACTIVE'));
   assert.equal(game.resume(pair.alice.token).player.balance,500);assert.equal(game.resume(pair.bob.token).player.balance,500);
   pair=duel(game,100,1);draw(0);spin(game,pair.alice,pair.id,0,'skin-200');spin(game,pair.bob,pair.id,0,'skin-200');
