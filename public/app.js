@@ -347,7 +347,7 @@ function pager(element,page,pages,total,side) {
 async function loadShop() {
   if (mode !== 'shop') return;
   const seq = ++shopSequence;
-  const params = new URLSearchParams({min:$('shopMin').value || '10',max:$('shopMax').value || '499999.99',q:$('shopSearch').value,sort:$('shopSort').value || 'asc',page:shopPage,limit:20});
+  const params = new URLSearchParams({min:$('shopMin').value || '10',max:$('shopMax').value || String(MAX_ITEM_PRICE),q:$('shopSearch').value,sort:$('shopSort').value || 'asc',page:shopPage,limit:20});
   try {
     const data = await api(`catalog?${params}`);
     if (seq !== shopSequence || mode !== 'shop') return;
@@ -360,7 +360,7 @@ async function loadShop() {
 }
 async function loadTargets() {
   const seq = ++targetSequence;
-  const params = new URLSearchParams({min:$('targetMin').value || '10',max:$('targetMax').value || '499999.99',q:$('targetSearch').value,sort:$('targetSort').value || 'desc',page:targetPage,limit:19});
+  const params = new URLSearchParams({min:$('targetMin').value || '10',max:$('targetMax').value || String(MAX_ITEM_PRICE),q:$('targetSearch').value,sort:$('targetSort').value || 'desc',page:targetPage,limit:19});
   try {
     const data = await api(`catalog?${params}`);
     if (seq !== targetSequence) return;

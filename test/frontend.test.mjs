@@ -360,12 +360,12 @@ test('new and restored sessions list the full shop range instead of a 500-ruble 
   await h.dispatch('welcomeForm', 'submit');
   const shopRequests = h.requests.filter((r) => r.path === '/api/catalog' && r.query.limit === '20');
   assert.ok(shopRequests.length >= 2);
-  assert.ok(shopRequests.every((r) => Number(r.query.max) >= 499999.99));
+  assert.ok(shopRequests.every((r) => Number(r.query.max) === 100000000));
   assert.equal(h.element('shopMax').value, '');
   const restored = harness({ engine: h.engine, savedToken: h.storage.get(SESSION_KEY) });
   await restored.evaluate('init()'); await settled();
   assert.equal(restored.element('shopMax').value, '');
-  assert.ok(restored.requests.some((r) => r.path === '/api/catalog' && r.query.limit === '20' && Number(r.query.max) >= 499999.99));
+  assert.ok(restored.requests.some((r) => r.path === '/api/catalog' && r.query.limit === '20' && Number(r.query.max) === 100000000));
 });
 
 test('custom multiplier buttons keep delegated clicks after rerender and ignore clicks while busy', async () => {
@@ -711,6 +711,17 @@ test('reduced motion and no-animation mode apply instantly and invalid saved mod
   }
   const h=harness({preferences:{zoneAnimation:'unknown'}});
   assert.equal(h.evaluate('prefs.zoneAnimation'),'smooth');
+});
+
+test('both catalogs expose premium offers by default and any premium target can be found in the shop',async()=>{
+  const h=harness();h.seed(100,200);
+  await h.evaluate('loadTargets()');
+  assert.ok(h.element('targetGrid').innerHTML.includes('skin-100000000'));
+  assert.ok(!h.element('targetGrid').innerHTML.includes('Зашифрованный'));
+  h.evaluate('selectTarget("skin-100000000")');
+  await h.clickDataset({action:'find-in-shop',key:'skin-100000000'});await settled();
+  assert.ok(h.element('sourceGrid').innerHTML.includes('skin-100000000'));
+  assert.equal(h.element('shopMin').value,'100000000');
 });
 
 test('six spin styles persist, preview without wagers, cancel on close and land exactly at both speeds',async()=>{
