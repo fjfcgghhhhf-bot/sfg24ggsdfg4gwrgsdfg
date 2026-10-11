@@ -46,3 +46,19 @@
 @media(max-width:620px){.target-column .multiplier-buttons .multiplier-value{font-size:23px}.target-column .multiplier-buttons .multiplier-chance{font-size:10px}.shop-all-button{font-size:9px;min-height:29px}}
 
 .animation-section-title{font-size:13px;color:#ece6cf;margin:18px 0 12px}.spin-section-title{padding-top:20px;border-top:1px solid #343437}.animation-section-title span{font-size:10px;font-weight:400;color:#aa9870;margin-left:8px}.spin-preview-emblem{font-size:90px;fill:#ffe34b}.spin-preview-controls p,.spin-preview p{color:#93949c;font-size:11px;line-height:1.6;margin:0}.spin-preview strong{color:#e5d599;font-size:12px}.spin-preview .button{min-height:39px;font-size:11px;padding:8px}.zone-modal{max-height:90dvh;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#75612b #191a1d}
+
+/* Compact target controls, matching the six-button reference. */
+#chancePresets{display:grid;grid-template-columns:repeat(6,minmax(0,1fr)) 24px;align-items:center;gap:5px;width:100%;max-width:340px;margin:14px auto 0;padding:0;background:none;border:0;border-radius:0;box-shadow:none}
+#chancePresets .multiplier-buttons{display:contents}
+#chancePresets .multiplier-buttons button,#chancePresets .chance-chip{display:flex;align-items:center;justify-content:center;height:34px;min-width:0;padding:0 3px;gap:0;border:1px solid #303136;border-radius:6px;background:linear-gradient(150deg,#202125,#191a1d);box-shadow:inset 0 1px 1px #ffffff05;color:#c5c6ca;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;transition:background .15s,border-color .15s,box-shadow .15s;overflow:hidden}
+#chancePresets .multiplier-value{font-size:12px;line-height:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#chancePresets .chance-red{border-color:#774548}#chancePresets .chance-yellow{border-color:#776c3d}#chancePresets .chance-green{border-color:#446b4d}
+#chancePresets .multiplier-buttons button:hover{border-color:#666970;background:#292b30}
+#chancePresets .multiplier-buttons button.active{border-color:#888b92;background:#303237;color:#f1f1f3;box-shadow:inset 0 0 0 1px #ffffff08}
+#chancePresets .chance-chip:hover,#chancePresets .chance-chip.active{background:#2c2b2e;color:#fff;box-shadow:inset 0 0 0 1px currentColor}
+#chancePresets .chance-red.active{color:#e0a3a5}#chancePresets .chance-yellow.active{color:#e0ce86}#chancePresets .chance-green.active{color:#98c9a4}
+#chancePresets .preset-settings{width:24px;height:34px;margin:0;padding:4px;border:0;background:transparent;color:#989ba2;display:flex;align-items:center;justify-content:center}
+#chancePresets .preset-settings .icon{width:15px;height:15px}#chancePresets .preset-settings:hover{color:#e9eaec}
+#chancePresets button:focus-visible{outline:2px solid #b6bbc6;outline-offset:3px}#chancePresets button:disabled{opacity:.35;cursor:not-allowed}
+.compact-fields{grid-template-columns:repeat(3,minmax(0,1fr))}.compact-fields input{width:100%;min-width:0;font-size:16px;padding:0 8px}.manual-chance-settings{margin-top:22px;padding-top:4px;border-top:1px solid #36373c}.manual-chance-settings .chance-picker{display:flex;height:40px;gap:7px;align-items:center}.manual-chance-settings .chance-picker input{min-width:0;flex:1;width:60px}.manual-chance-settings .chance-picker label{font-size:11px}.manual-chance-settings .chance-picker button{font-size:11px;display:flex;align-items:center;gap:4px}.manual-chance-settings .chance-picker .icon{width:13px;height:13px}
+@media(max-width:620px){#chancePresets{grid-column:1/-1;grid-row:2;max-width:340px;margin:8px auto 2px;padding:0;gap:5px}#chancePresets .multiplier-buttons button,#chancePresets .chance-chip{height:34px}#chancePresets .multiplier-value{font-size:12px}.compact-fields{gap:8px}.compact-fields input{font-size:14px}}

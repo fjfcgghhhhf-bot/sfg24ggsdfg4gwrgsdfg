@@ -54,7 +54,7 @@ function harness({ random = () => 0.5, engine, savedToken, preferences, intercep
   }
   const wheel = element('testWheel'), submit = element('testSubmit');
   for (const match of pageSource.matchAll(/\bid="([^"]+)"/g)) elements.set(match[1], element(match[1]));
-  const presets = [1.5, 2, 5, 10].map((value) => { const node = element(); node.dataset.multiplier = String(value); return node; });
+  const presets = [2.2, 10, 100].map((value) => { const node = element(); node.dataset.multiplier = String(value); return node; });
   const document = {
     body: element('body'), getElementById: (id) => elements.get(id) || null,
     querySelectorAll(selector) { if (selector === '[data-multiplier]') return presets; return []; },
@@ -369,12 +369,12 @@ test('new and restored sessions list the full shop range instead of a 500-ruble 
 });
 
 test('custom multiplier buttons keep delegated clicks after rerender and ignore clicks while busy', async () => {
-  const h = harness(); h.seed();
+  const h = harness(); h.seed();h.evaluate('activeMultiplier=10');
   await h.dispatch('multiplierSettings', 'click');
-  [1.5, 2.25, 5, 10].forEach((value, index) => { h.element(`multiplier${index}`).value = String(value); });
+  [1.5, 2.25, 5].forEach((value, index) => { h.element(`multiplier${index}`).value = String(value); });
   await h.dispatch('multiplierForm', 'submit');
   assert.equal(h.evaluate('target.price'), 225);
-  assert.deepEqual(JSON.parse(h.storage.get(PREFS_KEY)).multipliers, [1.5, 2.25, 5, 10]);
+  assert.deepEqual(JSON.parse(h.storage.get(PREFS_KEY)).multipliers, [1.5, 2.25, 5]);
   h.evaluate('activeMultiplier=null; renderSelection()');
   await h.clickDataset({ multiplier: h.presets[1].dataset.multiplier });
   assert.equal(h.evaluate('target.price'), 225);
@@ -387,6 +387,27 @@ test('custom multiplier buttons keep delegated clicks after rerender and ignore 
   await h.dispatch('multiplierForm', 'submit');
   assert.match(h.element('multiplierError').textContent, /1,34/);
   assert.equal(h.plain('prefs.multipliers')[0], 1.5);
+});
+
+test('compact percentage buttons select targets, respect busy state, and save editable chances under the cap',async()=>{
+  const h=harness();h.seed(100,200);
+  for(const [index,chance] of [32.2,39,61].entries()){
+    await h.dispatch(`chancePreset${index}`,'click');await settled();
+    assert.ok(Math.abs(h.evaluate('100*source.price/target.price')-chance)<.01);
+    assert.equal(h.element(`chancePreset${index}`).getAttribute('aria-pressed'),'true');
+  }
+  const requests=h.requests.length;h.evaluate('busy=true;renderSelection()');
+  await h.dispatch('chancePreset0','click');assert.equal(h.requests.length,requests);
+  assert.equal(h.element('chancePreset0').disabled,true);
+  h.evaluate('busy=false');await h.dispatch('multiplierSettings','click');
+  h.element('chanceSetting2').value='76';await h.dispatch('multiplierForm','submit');
+  assert.match(h.element('multiplierError').textContent,/75/);assert.equal(h.evaluate('prefs.chances[2]'),61);
+  h.element('chanceSetting2').value='75';await h.dispatch('multiplierForm','submit');
+  assert.deepEqual(JSON.parse(h.storage.get(PREFS_KEY)).chances,[32.2,39,75]);
+  const restored=harness({preferences:JSON.parse(h.storage.get(PREFS_KEY))});restored.seed(100,200);
+  await restored.dispatch('chancePreset2','click');await settled();
+  assert.ok(restored.evaluate('100*source.price/target.price')<=75);
+  assert.equal(restored.element('chancePreset2').textContent,'75');
 });
 
 test('repeated upgrade clicks issue one request, persist before animation, and never open a result popup', async () => {
@@ -451,13 +472,13 @@ test('manual target selection, direct upgrade and the goal price cap cannot bypa
 });
 
 test('saved and edited multipliers enforce the 75 percent limit while preserving other preferences',async()=>{
-  const h=harness({preferences:{multipliers:[1.01,1.33,1.34,4],sound:false}});
-  assert.deepEqual(h.plain('prefs.multipliers'),[1.5,2,1.34,4]);
+  const h=harness({preferences:{multipliers:[1.01,1.33,1.34],sound:false}});
+  assert.deepEqual(h.plain('prefs.multipliers'),[2.2,10,1.34]);
   assert.equal(h.evaluate('prefs.sound'),false);
   await h.dispatch('multiplierSettings','click');h.element('multiplier0').value='1.33';
   await h.dispatch('multiplierForm','submit');
   assert.match(h.element('multiplierError').textContent,/75%/);
-  assert.equal(h.plain('prefs.multipliers')[0],1.5);
+  assert.equal(h.plain('prefs.multipliers')[0],2.2);
   h.seed();await h.evaluate('pickMultiplier(1.33)');
   assert.equal(h.requests.length,0);assert.match(h.element('toast').textContent,/75%/);
 });
